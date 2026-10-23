@@ -1,0 +1,36 @@
+# Instance state and configuration never belong in this repository. With SENTINEL_ATLAS unset the state
+# directory is atlas/ itself (that is how the tests run), so everything a running instance writes there
+# is ignored here.
+atlas/baseline.json
+atlas/current.json
+atlas/known-ips.txt
+atlas/http-expected.json
+atlas/sentinel.env
+atlas/jobs.d/
+atlas/bridges.d/
+atlas/ALERT
+atlas/ALERT.log
+atlas/ALERT.acked
+atlas/ALERT.since
+atlas/REPORT-TO-SEND
+atlas/RESIDENT-OFF
+atlas/bus-sections.state
+atlas/drift.log
+atlas/heartbeat.log
+atlas/*.marker
+atlas/snapshots/
+atlas/pauses/*
+!atlas/pauses/README.md
+atlas/events.jsonl*
+atlas/events.lock
+atlas/*.tmp
+atlas/.ALERT.*
+**/__pycache__/
+*.pyc
+*.bak
+*.bak-*
+**/*.env
+!examples/sentinel.env
+**/*.token
+**/*.key
+**/*.pem

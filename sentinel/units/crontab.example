@@ -1,0 +1,5 @@
+# Atlas crontab template for the Atlas user (install.sh renders @ATLAS_CODE@ / @ATLAS_STATE@ and prints it;
+# with --install-cron it installs it). Cron has no EnvironmentFile: every script reads
+# $SENTINEL_ATLAS/sentinel.env itself, so SENTINEL_ATLAS is the only variable set here.
+7,37 * * * * SENTINEL_ATLAS=@ATLAS_STATE@ @ATLAS_CODE@/atlas/patrol.sh >/dev/null 2>&1  # atlas-managed: patrol every 30 min
+40 4 * * * find @ATLAS_STATE@/snapshots -name '*.json' -mtime +30 -delete  # atlas-managed: snapshot retention 30 days

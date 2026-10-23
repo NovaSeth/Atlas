@@ -1,0 +1,54 @@
+# Atlas: the read-only commands the Atlas user may run as root - and nothing else.
+# Rendered by install.sh (@ATLAS_USER@ is replaced), checked with `visudo -cf`, installed as
+# /etc/sudoers.d/atlas (0440). Inventory and rationale: docs/security.md.
+#
+# Requires sudo >= 1.9.10: arguments written as ^...$ are POSIX extended regular expressions.
+# Regexes are used instead of `*` wildcards on purpose: in sudoers a `*` in an argument also matches
+# spaces and "../", so `cat /etc/apache2/sites-enabled/*` would allow reading any file. The path
+# components below cannot start with a dot, so ".." can never appear. No backslashes are used
+# (bracket expressions like [.] instead), so sudoers escaping cannot change what a regex means.
+
+# Fixed command lines (exact match, no arguments may be added).
+Cmnd_Alias ATLAS_FIXED = /usr/bin/ss -tulnpH, \
+    /usr/bin/sha256sum /etc/sudoers, \
+    /usr/bin/ls /etc/sudoers.d, \
+    /usr/bin/ls /var/spool/cron/crontabs, \
+    /usr/bin/test -d /var/spool/cron/crontabs, \
+    /usr/bin/find /usr /bin /sbin /opt -xdev -perm -4000 -type f, \
+    /usr/bin/certbot certificates, \
+    /usr/sbin/ufw status numbered, \
+    /usr/bin/fail2ban-client status sshd, \
+    /usr/bin/docker ps --format {{.Names}}|{{.Image}}|{{.Ports}}, \
+    /usr/bin/journalctl -u ssh --since -24h -o short-iso --no-pager
+
+# Apache configuration: read and hash single files of sites-enabled / conf-enabled.
+Cmnd_Alias ATLAS_APACHE = \
+    /usr/bin/cat ^/etc/apache2/(sites|conf)-enabled/[A-Za-z0-9@_+-][A-Za-z0-9@._+-]*$, \
+    /usr/bin/sha256sum ^/etc/apache2/conf-enabled/[A-Za-z0-9@_+-][A-Za-z0-9@._+-]*$
+
+# Files that attackers use to persist or to hide: hashes only (never contents).
+Cmnd_Alias ATLAS_HASH = \
+    /usr/bin/sha256sum ^/etc/sudoers[.]d/[A-Za-z0-9@_+-][A-Za-z0-9@._+-]*$, \
+    /usr/bin/sha256sum ^/(etc/systemd/system|etc/systemd/user|usr/local/lib/systemd/system)/[A-Za-z0-9@_+-][A-Za-z0-9@._+-]*(/[A-Za-z0-9@_+-][A-Za-z0-9@._+-]*)?$, \
+    /usr/bin/sha256sum ^/etc/(ld[.]so[.]preload|hosts|resolv[.]conf|nsswitch[.]conf|pam[.]d/sshd|ssh/sshd_config|profile|bash[.]bashrc|rc[.]local|environment)$
+
+# Existence tests and directory listings of the watched places.
+Cmnd_Alias ATLAS_LIST = \
+    /usr/bin/test ^-d /(etc/systemd/system|etc/systemd/user|usr/local/lib/systemd/system|etc/cron[.]hourly|etc/cron[.]daily|etc/profile[.]d|etc/sudoers[.]d|etc/ssh/sshd_config[.]d|etc/apt/apt[.]conf[.]d)$, \
+    /usr/bin/test ^-e /etc/(ld[.]so[.]preload|hosts|resolv[.]conf|nsswitch[.]conf|pam[.]d/sshd|ssh/sshd_config|profile|bash[.]bashrc|rc[.]local|environment|ssh/ssh_host_(ed25519|rsa)_key[.]pub)$, \
+    /usr/bin/test ^-s /[A-Za-z0-9@_+-][A-Za-z0-9@._+/-]*/[.]ssh/authorized_keys$, \
+    /usr/bin/ls ^-1 /etc/(cron[.]hourly|cron[.]daily|profile[.]d|sudoers[.]d|ssh/sshd_config[.]d|apt/apt[.]conf[.]d)$, \
+    /usr/bin/find ^/(etc/systemd/system|etc/systemd/user|usr/local/lib/systemd/system) -maxdepth 2 -type f [(] -name [*][.]service -o -name [*][.]timer -o -name [*][.]socket -o -name [*][.]path [)]$
+
+# Key fingerprints (ssh-keygen -l prints fingerprints, never key material).
+Cmnd_Alias ATLAS_KEYS = \
+    /usr/bin/ssh-keygen ^-lf /[A-Za-z0-9@_+-][A-Za-z0-9@._+/-]*/[.]ssh/authorized_keys$, \
+    /usr/bin/ssh-keygen ^-lf /etc/ssh/ssh_host_(ed25519|rsa)_key[.]pub$
+
+# Crontabs of every account (read: -l only) and the journal of single units.
+Cmnd_Alias ATLAS_LOGS = \
+    /usr/bin/crontab ^-u [A-Za-z0-9_][A-Za-z0-9_.-]* -l$, \
+    /usr/bin/journalctl ^-u [A-Za-z0-9@_.-]+ --since -14d -o short-iso --no-pager$, \
+    /usr/bin/journalctl ^-u [A-Za-z0-9@_.-]+ --since -7d --no-pager$
+
+@ATLAS_USER@ ALL=(root) NOPASSWD: ATLAS_FIXED, ATLAS_APACHE, ATLAS_HASH, ATLAS_LIST, ATLAS_KEYS, ATLAS_LOGS

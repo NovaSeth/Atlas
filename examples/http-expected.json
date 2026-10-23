@@ -1,0 +1,7 @@
+{
+  "_extra_urls_cmd": "",
+  "example.com": [200],
+  "www.example.com": [301],
+  "app.example.com": [302, 401],
+  "status.example.org": [200]
+}

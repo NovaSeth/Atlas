@@ -1,0 +1,5 @@
+# Known source addresses for SSH logins: one IP per line, "#" starts a comment.
+# A successful SSH login from any other address raises an alarm (critical event, ALERT section).
+# An empty list means EVERY login alarms - add your own addresses before you log in next time.
+# 192.0.2.10     # office (example, documentation range)
+# 2001:db8::10   # home (example, documentation range)

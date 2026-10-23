@@ -1,0 +1,35 @@
+[Unit]
+Description=Sentinel stream daemon (journal + Apache sensitive-log followers, event bus router; no LLM)
+Documentation=file://@ATLAS_CODE@/docs/architecture.md
+After=systemd-journald.service
+
+[Service]
+# Type=notify: stream.py sends READY=1 and then WATCHDOG=1 every 30 s through NOTIFY_SOCKET.
+Type=notify
+NotifyAccess=main
+User=@ATLAS_USER@
+# Journal and Apache log access: the user must be in the groups that can read the system journal and
+# /var/log/apache2/*.log (on Debian/Ubuntu: adm and systemd-journal; install.sh adds them).
+WorkingDirectory=@ATLAS_CODE@
+Environment=SENTINEL_ATLAS=@ATLAS_STATE@
+# No leading "-": a missing env file must fail the unit loudly (escalation pages on a silent stream),
+# never fall back to writing state into the code tree. Template: examples/sentinel.env.
+EnvironmentFile=@ATLAS_STATE@/sentinel.env
+ExecStart=/usr/bin/python3 @ATLAS_CODE@/sentinel/stream.py
+# Restart always: if it goes down and does not come back after a restart, that is the error.
+Restart=always
+RestartSec=5
+# 120 s = 4 missed pings. A thread that died stops the pings, so systemd restarts a half-dead daemon.
+WatchdogSec=120
+# Bounded daemon, sized for a 1 vCPU host: target < 60 MB RSS, < 2% CPU.
+MemoryMax=80M
+CPUQuota=10%
+Nice=10
+# Hardening: it only reads logs and writes the bus + /var/tmp/sentinel; the router runs mail or the
+# configured notify command.
+NoNewPrivileges=yes
+PrivateTmp=no
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

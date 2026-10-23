@@ -1,0 +1,14 @@
+[Unit]
+Description=Sentinel escalation to the human without the LLM (patrol silent / resident dead / alert unacknowledged)
+Documentation=file://@ATLAS_CODE@/docs/architecture.md
+
+[Service]
+Type=oneshot
+User=@ATLAS_USER@
+Environment=SENTINEL_ATLAS=@ATLAS_STATE@
+# No leading "-": a missing env file must fail the unit loudly, never fall back to the code tree.
+EnvironmentFile=@ATLAS_STATE@/sentinel.env
+ExecStart=@ATLAS_CODE@/sentinel/escalation.sh
+TimeoutStartSec=120
+MemoryMax=128M
+Nice=10
