@@ -67,6 +67,8 @@ every login alarms (missing = the patrol section is UNKNOWN). Add your addresses
 For every `ServerName` in `HTTP_SITES_DIR` the probe requests `https://<name>/` without following redirects and
 compares the **first** status code with the list. A vhost missing from the file is an event ("unknown expectation"):
 a new site must be a conscious entry. Reserved names (`.invalid`, `.test`, `.example`, `.localhost`) are skipped.
+Sites without any `ServerName` (a fresh Apache with only `000-default.conf`) leave nothing to probe: the probe is
+clean and says so; an empty `HTTP_SITES_DIR` is UNKNOWN (it cannot be told from an unreadable one).
 
 `_extra_urls_cmd` (optional): a shell command printing URLs, one per line; each must answer 200. Use it for a path
 where breakage hides behind a cached front page, for example the newest published post of a CMS:
