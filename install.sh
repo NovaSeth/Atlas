@@ -64,12 +64,12 @@ case "$RCODE/" in
                       "keep state in its own directory" >&2; exit 2 ;;
 esac
 if [ "$RCODE" != "$REPO" ]; then
-    for e in "${PRODUCT[@]}"; do
-        case "$RSTATE/" in
-            "$RCODE/$e"/*) echo "install.sh: refusing: the state dir $STATE is inside $CODE/$e, which the install" \
-                                "replaces; keep state in its own directory (default /var/lib/atlas)" >&2; exit 2 ;;
-        esac
-    done
+    # Anywhere inside the code dir, not only inside a product entry: the staging and cleanup steps below work
+    # inside the code dir too, and state there is never a valid layout.
+    case "$RSTATE/" in
+        "$RCODE"/*) echo "install.sh: refusing: the state dir $STATE is inside the code dir $CODE, which the install" \
+                         "replaces; keep state in its own directory (default /var/lib/atlas)" >&2; exit 2 ;;
+    esac
 fi
 
 run() {   # every action that changes the system goes through here

@@ -322,7 +322,10 @@ def web_events(line):
     path_c = clean(path_raw, PATH_LIMIT)
     # The display is cut at 80 characters; the fingerprint must still tell two different paths apart
     # (two leaks sharing a prefix must not dedup into one), so it carries a digest of the full path.
-    digest = hashlib.sha256(path_raw.encode("utf-8", "surrogateescape")).hexdigest()[:12]
+    # Letters only (hex nibble -> a..p): a digit run would look like an epoch to the bus fingerprint sanitizer
+    # and be replaced, which would merge distinct paths again.
+    digest = "".join("abcdefghijklmnop"[int(c, 16)]
+                     for c in hashlib.sha256(path_raw.encode("utf-8", "surrogateescape")).hexdigest()[:12])
     # grep needs a literal prefix of the logged path, not the "..." of a shortened one
     grep_key = clean(path_raw, len(path_raw) + 1)[:PATH_LIMIT]
     if 200 <= status < 300:

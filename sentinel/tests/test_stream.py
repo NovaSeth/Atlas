@@ -312,7 +312,8 @@ class FingerprintTests(unittest.TestCase):
         import hashlib
         path = "/.git/" + "b" * 100
         ev = stream.classify_web(self.LINE % path)
-        self.assertIn(hashlib.sha256(path.encode()).hexdigest()[:12], ev["fingerprint"])
+        letters = "".join("abcdefghijklmnop"[int(c, 16)] for c in hashlib.sha256(path.encode()).hexdigest()[:12])
+        self.assertIn(letters, ev["fingerprint"])
 
 
 class MethodTests(unittest.TestCase):
