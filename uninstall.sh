@@ -48,6 +48,8 @@ for u in "${UNITS[@]}"; do
     present "$SYSTEMD_DIR/$u" && run rm -f "$SYSTEMD_DIR/$u"
 done
 run systemctl daemon-reload
+# a removed unit that last ended in error stays listed by `systemctl --failed` until reset
+run systemctl reset-failed sentinel-stream.service sentinel-escalation.service 2>/dev/null || true
 
 if present "$APACHE_CONF_DIR/sentinel-sensitive.conf"; then
     say "removing the Apache snippet"

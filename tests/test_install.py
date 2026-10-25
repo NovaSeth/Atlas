@@ -99,6 +99,8 @@ class InstallDryRun(unittest.TestCase):
         self.assertIn("rm -f /etc/sudoers.d/atlas", plan)
         self.assertIn("a2disconf -q sentinel-sensitive", plan)
         self.assertNotIn("rm -rf", plan)                                          # state kept without --purge
+        # seen on the test VM: the removed escalation unit stayed in `systemctl --failed` (not-found failed)
+        self.assertIn("systemctl reset-failed sentinel-stream.service sentinel-escalation.service", plan)
         r = subprocess.run(["bash", str(UNINSTALL), "--dry-run", "--purge", "--state", str(self.state)],
                            capture_output=True, text=True, timeout=60)
         self.assertIn("rm -rf --one-file-system %s" % self.state, r.stdout)
