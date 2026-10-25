@@ -60,7 +60,7 @@ INVISIBLE = frozenset(
     + [chr(c) for c in range(0x202A, 0x202F)]    # LRE, RLE, PDF, LRO, RLO
     + [chr(c) for c in range(0x2060, 0x2065)]    # WJ, invisible operators
     + [chr(c) for c in range(0x2066, 0x206A)]    # LRI, RLI, FSI, PDI
-    + ["﻿", "؜", "᠎"])
+    + ["\ufeff", "\u061c", "\u180e"])
 
 _AI = r"(?:ai|llm|assistant|agent|model|bot|claude|gpt|chatgpt|copilot|gemini|resident)"
 _CMD_WORD = (r"(?:sudo|su|curl|wget|bash|sh|zsh|rm|chmod|chown|python3?|perl|nc|ncat|socat|systemctl|"
