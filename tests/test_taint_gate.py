@@ -2105,7 +2105,9 @@ def test_missing_config_is_normal_and_silent(gate):
 def test_default_paths_are_derived_from_home(tmp_path):
     home = tmp_path / "h"
     (home / "atlas-state").mkdir(parents=True)
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home)}
+    # only HOME (plus a private switch path, so a switch set on the test host cannot turn the hook off)
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home),
+           "TAINT_SWITCH": str(tmp_path / "no-switch")}
     # run the hook with only HOME set: state, log, transcripts, quarantine and Atlas state follow it
     payload = {"hook_event_name": "PreToolUse", "session_id": SID, "cwd": str(home),
                "tool_name": "Read", "tool_input": {"file_path": str(home / "atlas-state" / "events.jsonl")},
