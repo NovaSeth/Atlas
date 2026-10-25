@@ -3,6 +3,7 @@
 completely; the rendered sudoers drop-in parses. No root, no system change."""
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -58,6 +59,49 @@ class InstallDryRun(unittest.TestCase):
         self.assertNotIn("crontab -u", plan)                                      # cron only on request
         self.assertIn("SENTINEL_ATLAS=%s /opt/atlas/atlas/patrol.sh" % self.state, out)   # crontab printed
         self.assertNotIn("@ATLAS_", out)
+
+    def planned_code_steps(self, code):
+        """The planned commands that replace the code: rm -rf <code>/<entry> ... then one cp -a."""
+        out = subprocess.run(["bash", str(INSTALL), "--dry-run", "--code", str(code), "--state", str(self.state),
+                              "--user", "atlas-test-nobody"], capture_output=True, text=True, timeout=120).stdout
+        steps = [shlex.split(l) for l in self.planned(out)
+                 if l.startswith("cp -a ") or l.startswith("rm -rf %s/" % code)]
+        self.assertEqual(len([s for s in steps if s[0] == "cp"]), 1, out)
+        for s in steps:
+            if s[0] == "rm":   # never anything outside the code dir, never the code dir itself
+                self.assertTrue(all(a.startswith("%s/" % code) and a != "%s/" % code for a in s[2:]), s)
+        return steps
+
+    def planned_copy(self, code):
+        return [s for s in self.planned_code_steps(code) if s[0] == "cp"][0]
+
+    def test_reinstall_over_existing_code_updates_agent(self):
+        code = self.tmp / "code"
+        (code / "agent" / "claude-code").mkdir(parents=True)
+        (code / "agent" / "claude-code" / "stale.md").write_text("old")
+        (code / "atlas").mkdir()
+        (code / "AGENTS.md").write_text("old instructions\n")
+        steps = self.planned_code_steps(code)
+        argv = steps[-1]
+        self.assertEqual(argv[0], "cp")
+        self.assertIn("%s/agent" % ROOT, argv)
+        self.assertEqual(argv[-1], "%s/" % code)
+        # run exactly the planned code steps against the temp code dir (no root needed)
+        for s in steps:
+            r = subprocess.run(s, capture_output=True, text=True, timeout=60)
+            self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual((code / "AGENTS.md").read_text(), (ROOT / "AGENTS.md").read_text())
+        plugin = code / "agent" / "claude-code" / ".claude-plugin" / "plugin.json"
+        self.assertEqual(plugin.read_text(), (ROOT / "agent" / "claude-code" / ".claude-plugin" / "plugin.json").read_text())
+        self.assertFalse((code / "agent" / "claude-code" / "stale.md").exists(),
+                         "a file removed from the product must not survive a re-install")
+
+    def test_every_product_entry_is_copied(self):
+        tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True).stdout.split()
+        top = {t.split("/", 1)[0] for t in tracked}
+        not_product = {".github", ".gitignore", "tests", "pytest.ini"}   # CI and the test suite stay in the repo
+        copied = {Path(a).name for a in self.planned_copy(self.tmp / "code")[2:-1]}
+        self.assertEqual(top - not_product, copied, "a top-level entry is neither copied nor declared not-product")
 
     def test_existing_config_is_never_overwritten(self):
         self.state.mkdir()
