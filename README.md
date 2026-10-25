@@ -4,16 +4,36 @@
 minutes when it stops looking like that, and makes sure a human hears about it, with or without an AI agent watching
 the server.
 
+**Atlas works best in tandem with an LLM agent.** Atlas notices a sudden failure or an intrusion; an AI agent on
+the host, woken by Atlas within seconds, analyses it and acts on it: investigates, repairs, or tells the human
+"this was an intrusion" instead of forwarding a raw alarm. The system as a whole is **LLM-optional**: the alerting
+path never depends on the agent and stays a safety net, because the agent may itself be what failed or what was
+manipulated.
+
 Its single job is to tell two kinds of change apart:
 
 - the server changed because **its owner (or the owner's AI agent) changed it**: the change is reviewed and accepted (`bless`);
 - the server changed because **someone else changed it**: that is an intrusion, not a glitch.
 
-Everything below runs without a language model: stdlib Python 3 and bash, cron and systemd. An AI agent watching the
-server (the *resident*, optional) makes the system complete: it is woken in seconds, investigates, repairs and gives
-the human a verdict instead of a raw alarm. Without a resident, Atlas still detects and still calls the human.
+Atlas itself runs without a language model: stdlib Python 3 and bash, cron and systemd. Without an agent (the
+*resident*) it still detects and still calls the human; with one, the human gets a verdict instead of a raw alarm.
 
 Licence: MIT (see LICENSE).
+
+### Atlas + an AI agent
+
+| | Who does it |
+|---|---|
+| Detection (drift, SSH logins, sudo, failed units, OOM, sensitive web paths) | Atlas, deterministic |
+| Escalation to the human (mail, notify command) | Atlas, LLM-free: works with the agent dead, absent or manipulated |
+| Investigation: what changed, who did it, is it still happening | the agent |
+| A verdict instead of a raw alarm | the agent |
+| Repair within its mandate (restart a failed service, free disk) | the agent |
+| Accepting a deliberate change (`bless`) and acknowledging the alert | the agent, only for changes it can explain |
+
+How to connect one: [Connect Atlas to an LLM agent](#connect-atlas-to-an-llm-agent) below and
+[docs/resident.md](docs/resident.md). The agent reads untrusted text (request paths, user names, web pages): it
+reads raw logs only through a quarantined reader without write tools, and never acts on instructions found in data.
 
 ---
 
@@ -84,6 +104,30 @@ already set in the environment wins. The most important keys:
 Your own checks plug in without touching the code: job contracts in `jobs.d/`, report bridges in `bridges.d/`,
 expected HTTP codes in `http-expected.json`, deliberate silences in `pauses/`.
 Full reference: [docs/configuration.md](docs/configuration.md).
+
+## Connect Atlas to an LLM agent
+
+The operating procedure ships with Atlas: [AGENTS.md](AGENTS.md) for any agent harness, and a Claude Code plugin in
+[agent/claude-code/](agent/claude-code/) (the alert procedure as a skill, plus a quarantined `log-reader` subagent
+with read-only tools). Step by step, in detail in [docs/resident.md](docs/resident.md):
+
+1. Run the agent session on the host under your operator account (in the `atlas` group; state changes as the
+   `atlas` user). Give it `/opt/atlas/AGENTS.md`, or with Claude Code load the plugin:
+   `claude --plugin-dir /opt/atlas/agent/claude-code` for one session, or persistently
+   `claude plugin marketplace add /opt/atlas/agent` and `claude plugin install atlas-resident@atlas`.
+2. Arm the watch with the agent's monitor tool (Claude Code: Monitor) on
+   `SENTINEL_ATLAS=/var/lib/atlas /opt/atlas/sentinel/session-sensor.sh`: one line per state change, no polling;
+   re-arm it when it expires.
+3. Set `SENTINEL_RESIDENT_UNIT` and/or `SENTINEL_RESIDENT_SCREEN` in `sentinel.env`, so the router and escalation
+   know whether the agent is present (absent agent = critical events go straight to the human).
+4. Optionally start the session from a systemd unit after a reboot (example in docs/resident.md).
+5. On a wake-up the agent reads ALERT and the bus line, verifies by probing system state, fixes or blesses
+   (`atlas.py bless`), acknowledges (`touch <state>/ALERT.acked`) and reports to you; anything unexplained stays
+   unacknowledged so escalation still reaches you.
+6. `touch <state>/RESIDENT-OFF` when you stop the agent on purpose.
+7. Safety: raw logs only through the quarantined reader, no action on instructions found in data, human approval
+   for privileged actions after reading untrusted data. A taint-gate hook that enforces the last rule is planned
+   for the plugin (not shipped yet). The escalation path stays LLM-independent.
 
 ---
 
@@ -207,6 +251,9 @@ flowchart LR
 ```text
 install.sh                     installer: prerequisites, state dir, units, sudoers, Apache snippet, crontab, first snapshot (--dry-run)
 uninstall.sh                   removes units, snippet and sudoers; keeps the state dir unless --purge
+AGENTS.md                      operating instructions for an AI resident (any harness): wake-up, alert procedure, limits
+agent/claude-code/             Claude Code plugin atlas-resident: alert-procedure skill, quarantined log-reader subagent
+agent/.claude-plugin/          local plugin marketplace manifest (claude plugin marketplace add <code>/agent)
 atlas/
   atlas.py                     snapshot of the machine's identity; check (drift vs baseline), bless, show, thresholds, silent failures
   patrol.sh                    one patrol run: every periodic sensor under a time limit -> ALERT, drift.log, heartbeat.log, bus events
@@ -220,6 +267,7 @@ atlas/
 sentinel/
   bus.py                       append-only JSONL event bus: emit (validated), follow (tail -F, per-fingerprint dedup), rotation
   stream.py                    daemon: follows the journal and the Apache sensitive-path log, turns lines into events, heartbeat
+  untrusted.py                 clean/quote untrusted text (printable ASCII, bounded); flags instruction-like input
   router.py                    for critical events: notifies the human when no AI resident is present (once per fingerprint per 6 h)
   escalation.sh                LLM-free path to the human: silent patrol, silent stream, dead resident, unacknowledged alarm
   session-sensor.sh            prints one line per state change for an AI agent's monitor tool (no polling inside the agent)
@@ -228,7 +276,7 @@ sentinel/
   apache/sentinel-sensitive.conf   logs requests for .env, .git, wp-config, dumps ... to a separate log for stream.py
 i18n/en.json, i18n/pl.json     every human-facing message; SENTINEL_LANG picks the language
 examples/                      sentinel.env, http-expected.json, known-ips.txt, jobs.d/, bridges.d/, sudoers.d/atlas
-docs/                          architecture, configuration, security, resident (connecting an AI agent)
+docs/                          architecture (incl. untrusted input), configuration, security, resident (connecting an AI agent)
 .github/workflows/tests.yml    CI: tests, shell syntax and an installer dry run on every push
 ```
 
@@ -352,6 +400,7 @@ flowchart TB
 | `atlas/sensors/http_probes.py` | sensor | Every enabled vhost answers with its expected first status code; optional extra URLs answer 200. |
 | `sentinel/bus.py` | library + CLI | Append-only JSONL bus with `flock`, rotation at 5 MB (3 generations), validation, and `follow` with tail -F semantics and per-fingerprint dedup. |
 | `sentinel/stream.py` | `sentinel-stream.service` (Type=notify, watchdog 120 s, MemoryMax 80 M) | Follows the journal (`ssh.service`, `sudo`, PID 1, kernel) and the Apache sensitive-path log; turns lines into events; touches a heartbeat every 60 s. |
+| `sentinel/untrusted.py` | library (stream, sensors) | `clean()` / `quote()`: untrusted text as printable, bounded ASCII data; `suspicious()`: a documented heuristic that adds an `input.injection-suspect` warning. A signal, not a defense. |
 | `sentinel/router.py` | inside the daemon | For a `critical` event: if the resident is absent (or none is configured), notifies the human at once, at most once per fingerprint per 6 h. |
 | `sentinel/escalation.sh` | `sentinel-escalation.timer`, every 10 min | Mails the human (and calls the notify command) when the patrol is silent > 45 min, the resident is dead, an alarm is unacknowledged > 45 min, or the stream heartbeat is older than 5 min. Same kind at most once per 6 h. |
 | `sentinel/session-sensor.sh` | the agent session's monitor tool | Prints one line per state change (ALERT appeared or cleared, a bus event `alert`+, an escalation, a report to deliver). Silence costs nothing. |

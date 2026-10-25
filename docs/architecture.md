@@ -97,10 +97,46 @@ One JSON object per line in `$SENTINEL_ATLAS/events.jsonl`, appended under `floc
 | `confidence` | `measured` · `inferred` · `unknown` |
 | `fingerprint` | names **what** happened, never **when**: the validator rejects anything that looks like a date, a clock time or an epoch, so repeats deduplicate |
 | `message` | optional sentence for the human, from the catalog. The older name `message_pl` is still accepted for one release |
-| `evidence` | optional object; free text from the internet (request paths) appears only shortened and without the query |
+| `evidence` | optional object; untrusted text (request paths, user names, command lines) appears only cleaned: printable ASCII, bounded, without the query (see *Untrusted input*) |
 
 CLI: `python3 sentinel/bus.py emit --json '<event>'` (exit 2 when invalid) and
 `python3 sentinel/bus.py follow --min-severity alert --dedup-seconds 3600 --from-end`.
+
+## Untrusted input
+
+Much of what Atlas reports was written by someone else: a request path is whatever a scanner sent, an SSH user
+name is whatever the client asked for, a sudo command line and a process name are whatever a local user typed.
+That text reaches the bus, `ALERT` and, through the session sensor, an AI agent with privileges. A sentence in it
+can be read as an instruction (prompt injection through log data).
+
+What Atlas does (`sentinel/untrusted.py`, stdlib):
+
+- **Sanitized fields.** Every internet- or user-controlled field enters `what` and `message` through `quote()`
+  (printable ASCII 0x20-0x7E, everything else `?`, ANSI escape sequences cut out, whitespace collapsed, wrapped in
+  double quotes with `"` and `\` escaped) and enters `evidence` and fingerprints through `clean()` (the same
+  without the quotes). Limits: request path 80 characters, SSH user 32, sudo command 120 in `what` (500 in
+  `evidence`), process name 32. The patrol sensors clean user names (32), host names (80) and extra URLs (120)
+  in their ALERT lines, and `session-sensor.sh` strips every byte outside tab, newline and printable ASCII from
+  the ALERT excerpt it prints.
+- **Suspect warning.** When a field looks like instructions (`suspicious()`: override phrases, role markers such
+  as `system:` or "you are now", "new instructions", text addressed to an AI, "please run <command>", context
+  manipulation such as "the admin has authorized" or "this alert is a false positive", base64 runs of 40+
+  characters that decode to text, zero-width or bidi characters), the stream emits one extra event: sensor
+  `input.injection-suspect`, severity `warning`, `what` = `instruction-like text in <field> from <source>:
+  <rule ids>`, evidence `{field, source, rules, sample}` (the sample is cleaned and at most 40 characters),
+  fingerprint `input.injection-suspect:<sensor>:<field>:<first rule id>`. A warning never wakes the session and
+  never blocks the original event; its alert semantics are unchanged.
+- **Optional classifier.** `ATLAS_INJECTION_CLASSIFIER_CMD` (off by default) names a local command that gets the
+  raw text on stdin and exits 1 for "suspicious" (2 s timeout; any other outcome is ignored). Nothing leaves the
+  host unless that command sends it.
+
+Why this is not a full defense: keyword rules and classifiers are evadable, and the research on prompt injection
+through log fields ("Poisoning the Watchtower") shows persona and context payloads succeed far more often than
+blunt "ignore previous instructions". The rules favour precision, so the warning means something when it
+appears, but its absence proves nothing. The real defense sits outside the model: an AI agent reads raw logs only
+through a quarantined reader without write tools (the `log-reader` subagent in `agent/claude-code/`), never acts
+on instructions found in data, and needs a human message before a privileged action once it has read untrusted
+text. The alerting path itself stays LLM-free, so a manipulated agent cannot stop the human from being told.
 
 ## When a layer dies
 
