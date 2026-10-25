@@ -24,7 +24,14 @@ Licence: MIT (see LICENSE).
 - A working `mail` command (bsd-mailx or mailutils plus an MTA) for the escalation mails, and/or any command-line
   notifier you configure as `SENTINEL_NOTIFY_CMD`.
 - Optional, used when present: Apache 2.4 (vhost inventory, HTTP probes, sensitive-path log), certbot, ufw,
-  fail2ban, Docker, `screen` (if your resident runs in one).
+  fail2ban, Docker, `screen` (if your resident runs in one). A missing optional tool is reported as
+  "not present" by `atlas.py show`, never as an alarm.
+- `git` to fetch the code. A minimal Debian cloud image lacks `git` and `cron`; on Debian/Ubuntu:
+  `sudo apt-get install -y git python3 sudo cron iproute2` (add `apache2` if you serve sites with it).
+
+Tested on: a clean Debian 13 (trixie) genericcloud amd64 image with Apache 2.4, 1 vCPU and 768 MB RAM,
+2026-10-25: Quick start as written, then the acceptance checks (units, sudoers drop-in, patrol, drift,
+real-time SSH and sensitive-path events, escalation, uninstall and reinstall, Polish texts).
 
 ## Quick start
 
@@ -45,7 +52,8 @@ The installer (idempotent; defaults `--code /opt/atlas --state /var/lib/atlas --
 5. installs the Apache log snippet only with `--with-apache`;
 6. installs a sudoers drop-in limited to the read-only commands Atlas runs (checked with `visudo -cf` first);
 7. prints the crontab lines (installs them only with `--install-cron`);
-8. takes the first snapshot and asks before accepting it as the baseline (`--yes` skips the question).
+8. takes the first snapshot and asks before accepting it as the baseline (`--yes` skips the question); on a
+   reinstall an existing baseline is never replaced: review the drift with `atlas.py check`, then `bless`.
 
 `./uninstall.sh` reverses units, snippet, sudoers and crontab lines; the state directory stays unless `--purge`.
 
@@ -383,3 +391,5 @@ python3 -m pytest -q          # needs python3-pytest; about 2 minutes on one vCP
 ```
 
 Every test runs on temporary directories with stubbed commands: no root, no mail, no network, no real state.
+GitHub Actions runs the same suite on every push and pull request (Python 3.11 and 3.13), plus `bash -n` on every
+shell script and an installer dry run: [.github/workflows/tests.yml](.github/workflows/tests.yml).
