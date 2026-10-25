@@ -128,9 +128,10 @@ while true; do
             [ "$(stat -c %Y "$ATLAS/ALERT.acked" 2>/dev/null || echo 0)" -ge "$(stat -c %Y "$ATLAS/ALERT" 2>/dev/null || echo 0)" ] && acked=1
         if [ "$acked" -eq 0 ]; then
             body=$(tail -n +2 "$ATLAS/ALERT")
-            # printable ASCII, tab and newline only: ESC sequences, zero-width and bidi bytes from
-            # untrusted text in ALERT must not reach the terminal or the agent reading this line
-            cur="ATLAS ALERT: $(printf '%s' "$body" | LC_ALL=C tr -cd '\11\12\40-\176' | head -c 300 | tr '\n' ' ')"
+            # ANSI sequences, control and format characters (zero-width, bidi overrides) from untrusted
+            # text in ALERT must not reach the terminal or the agent reading this line; letters in any
+            # language stay (SENTINEL_LANG=pl). 300 characters, newlines become spaces.
+            cur="ATLAS ALERT: $(printf '%s' "$body" | python3 -I "$SDIR/untrusted.py" clean-unicode 300)"
             key="alert:$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)"
         fi
     fi
