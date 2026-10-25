@@ -46,7 +46,7 @@ SENTINEL_ATLAS=/var/lib/atlas /opt/atlas/sentinel/session-sensor.sh
 
 It prints a line only when something **changes**:
 
-- `ATLAS ALERT: <first 300 characters>` - a new or changed, unacknowledged ALERT (printable ASCII only);
+- `ATLAS ALERT: <first 300 characters>` - a new or changed, unacknowledged ALERT (control, zero-width and bidi characters and ANSI sequences removed);
 - `HH:MM ALERT|CRITICAL <sensor>: <what> [<fingerprint>]` - a bus event of severity `alert` or higher (each
   fingerprint at most once an hour);
 - `REPORT waiting to be sent (REPORT-TO-SEND)` - a bridge produced a report for the human;
