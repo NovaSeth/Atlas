@@ -77,6 +77,41 @@ class ClassifyTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"SENTINEL_TRUSTED_SUDO_USERS": "root, ops"}):
             self.assertEqual(self.cj(ops)["severity"], "info")
 
+    def test_sudo_line_with_leading_padding_is_classified(self):
+        # sudo >= 1.9 (Debian 13) pads the user name: "  tester : PWD=...". Seen on a fresh VM:
+        # the unpadded regex dropped every real sudo line, so the sudo path was blind.
+        base = {"SYSLOG_IDENTIFIER": "sudo"}
+        with mock.patch.dict(os.environ, {"SENTINEL_TRUSTED_SUDO_USERS": "root"}), \
+                mock.patch.object(stream, "self_user", return_value="atlas"):
+            ev = self.cj(dict(base, MESSAGE="  mallory : PWD=/home/mallory ; USER=root ; COMMAND=/usr/bin/id"))
+            self.assertEqual((ev["sensor"], ev["severity"]), ("auth.sudo.command", "alert"))
+            self.assertEqual(ev["evidence"]["user"], "mallory")
+            self.assertEqual(ev["evidence"]["command"], "/usr/bin/id")
+            r = self.cj(dict(base, MESSAGE="    root : PWD=/ ; USER=root ; COMMAND=/usr/bin/ls"))
+            self.assertEqual(r["severity"], "info")
+
+    def test_own_service_user_successful_sudo_is_dropped_denied_is_alert(self):
+        # Atlas runs ~300 allowlisted read-only sudo commands per patrol as its own user; emitting
+        # them would flood the bus. A DENIED sudo by that user is not Atlas measuring: alert.
+        base = {"SYSLOG_IDENTIFIER": "sudo"}
+        with mock.patch.dict(os.environ, {"SENTINEL_TRUSTED_SUDO_USERS": "root"}), \
+                mock.patch.object(stream, "self_user", return_value="atlas"):
+            ok = "   atlas : PWD=/var/lib/atlas ; USER=root ; COMMAND=/usr/bin/ss -tulnpH"
+            self.assertIsNone(self.cj(dict(base, MESSAGE=ok)))
+            denied = ("   atlas : command not allowed ; PWD=/tmp ; USER=root ; "
+                      "COMMAND=/usr/bin/cat /etc/shadow")
+            ev = self.cj(dict(base, MESSAGE=denied))
+            self.assertEqual((ev["sensor"], ev["severity"]), ("auth.sudo.command", "alert"))
+            self.assertIn("command not allowed", ev["what"])
+            # a denied sudo by a trusted user is not routine either
+            ev = self.cj(dict(base, MESSAGE="root : 3 incorrect password attempts ; TTY=pts/0 ; PWD=/ ; "
+                                            "USER=root ; COMMAND=/usr/bin/id"))
+            self.assertEqual(ev["severity"], "alert")
+        # the daemon running as root never hides root's sudo
+        with mock.patch.object(stream, "self_user", return_value="root"):
+            r = self.cj(dict(base, MESSAGE="root : PWD=/ ; USER=root ; COMMAND=/usr/bin/ls"))
+            self.assertEqual(r["severity"], "info")
+
     def test_unit_failed_fingerprint_per_unit(self):
         e = {"MESSAGE": "foo.service: Failed with result 'exit-code'.", "_PID": "1", "UNIT": "foo.service"}
         ev = self.cj(e)
