@@ -208,7 +208,12 @@ as_user() {
 }
 say "first snapshot"
 as_user python3 "$CODE/atlas/atlas.py" snap
-if [ "$YES" -eq 1 ]; then
+if [ -e "$STATE/baseline.json" ]; then
+    # A reinstall or an update never accepts the current state on its own (not even with --yes):
+    # drift since the last bless, an intruder's account included, would silently become the baseline.
+    say "keeping the existing baseline; review the drift first:"
+    say "    sudo -u $AUSER env SENTINEL_ATLAS=$STATE python3 $CODE/atlas/atlas.py check   (then bless if it is yours)"
+elif [ "$YES" -eq 1 ]; then
     as_user python3 "$CODE/atlas/atlas.py" bless
 elif [ "$DRY" -eq 1 ]; then
     say "would ask before accepting the snapshot as the baseline (bless); --yes skips the question"
