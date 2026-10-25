@@ -61,8 +61,8 @@
   "esc.alert_unacked": "ALERT WITHOUT A RECIPIENT for {age} min — nobody acknowledged it. Content:\n{body}\n",
   "esc.stream_missing": "EVENT STREAM SILENT: file {file} is missing — the sentinel-stream daemon did not start or the file was deleted.\nCheck: systemctl status sentinel-stream\n",
   "esc.stream_silent": "EVENT STREAM SILENT for {age} min (threshold {limit}). The sentinel-stream daemon stopped beating.\nCheck: systemctl status sentinel-stream\n",
-  "esc.subject": "[sentinel] SERVER: silence in the supervision layer ({kind})",
-  "esc.body": "Sentinel detected that the supervision layer stopped answering. This mail BYPASSED\nthe LLM agent — precisely because the agent may be what stopped working.\n\n{problem}\n--\nmachine:   {host}, uptime {uptime}\nresources: disk {disk}, RAM {ram}Mi free\ntime:      {time}\n\nWhat to check by hand:\n  tail {state}/heartbeat.log\n  cat  {state}/ALERT{hints}",
+  "esc.subject": "[sentinel] SERVER needs attention ({kind})",
+  "esc.body": "Sentinel found a problem that nobody handled in time, or that concerns the supervision itself.\nThis message BYPASSED the LLM agent, precisely because the agent may be what stopped working.\n\n{problem}\n--\nmachine:   {host}, uptime {uptime}\nresources: disk {disk}, RAM {ram}Mi free\ntime:      {time}\n\nWhat to check by hand:\n  tail {state}/heartbeat.log\n  cat  {state}/ALERT{hints}",
   "esc.hint_unit": "\n  systemctl status {unit}",
   "esc.hint_screen": "\n  screen -r {screen}",
 
