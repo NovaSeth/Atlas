@@ -277,6 +277,124 @@ class UntrustedFieldTests(unittest.TestCase):
         self.assertEqual(stream.journal_events({"MESSAGE": "nothing"}, known_ips_path=self.known), [])
 
 
+class FingerprintTests(unittest.TestCase):
+    """Review round 2: the fingerprint must not merge distinct leaks that share an 80-character prefix."""
+
+    LINE = '2026-10-22T10:00:00 www.example.com 198.51.100.50 200 512 "GET %s HTTP/1.1"'
+
+    def test_long_paths_with_one_prefix_get_distinct_fingerprints(self):
+        a = stream.classify_web(self.LINE % ("/.env/" + "a" * 74 + "public"))
+        b = stream.classify_web(self.LINE % ("/.env/" + "a" * 74 + "secret"))
+        self.assertEqual(a["evidence"]["path"], b["evidence"]["path"])     # the display stays truncated
+        self.assertNotEqual(a["fingerprint"], b["fingerprint"])
+        self.assertIn("/.env/", a["fingerprint"])
+        import bus
+        self.assertEqual(bus.validate(a | {"ts": "x"}), [])
+
+    def test_same_path_same_fingerprint_query_ignored(self):
+        a = stream.classify_web(self.LINE % "/wp-config.php?x=1")
+        b = stream.classify_web(self.LINE % "/wp-config.php?x=2")
+        self.assertEqual(a["fingerprint"], b["fingerprint"])
+        self.assertIn("wp-config.php", a["fingerprint"])
+
+    def test_digest_is_of_the_full_raw_path(self):
+        import hashlib
+        path = "/.git/" + "b" * 100
+        ev = stream.classify_web(self.LINE % path)
+        self.assertIn(hashlib.sha256(path.encode()).hexdigest()[:12], ev["fingerprint"])
+
+
+class MethodTests(unittest.TestCase):
+    LINE = '2026-10-22T10:00:00 www.example.com 198.51.100.50 200 512 "%s /wp-config.php HTTP/1.1"'
+
+    def setUp(self):
+        self.d = tmpdir(self)
+        p = mock.patch.dict(os.environ)
+        p.start()
+        self.addCleanup(p.stop)
+        os.environ.pop("ATLAS_INJECTION_CLASSIFIER_CMD", None)
+
+    def test_method_is_bounded_in_what(self):
+        ev = stream.classify_web(self.LINE % ("A" * 100))
+        self.assertLessEqual(len(ev["what"].split(" ", 1)[0]), 16)
+
+    def classifier_flagging(self, word):
+        s = self.d / "cls.sh"
+        s.write_text('#!/bin/sh\nread -r x\n[ "$x" = "%s" ] && exit 1\nexit 0\n' % word)
+        s.chmod(0o755)
+        os.environ["ATLAS_INJECTION_CLASSIFIER_CMD"] = str(s)
+
+    def test_unknown_method_goes_through_the_suspect_check(self):
+        self.classifier_flagging("FOOBAR")
+        evs = stream.web_events(self.LINE % "FOOBAR")
+        sus = [e for e in evs if e["sensor"] == "input.injection-suspect"]
+        self.assertEqual([e["evidence"]["field"] for e in sus], ["method"])
+
+    def test_known_method_is_not_checked(self):
+        self.classifier_flagging("GET")
+        evs = stream.web_events(self.LINE % "GET")
+        self.assertEqual([e["sensor"] for e in evs], ["web.sensitive-hit"])
+
+
+class SuspectLimiterTests(unittest.TestCase):
+    """Review round 2: an attacker must not be able to flood the bus with suspect warnings."""
+
+    def setUp(self):
+        self.now = [1000.0]
+        self.lim = stream.SuspectLimiter(per_fp_secs=600, max_per_hour=30, clock=lambda: self.now[0])
+
+    @staticmethod
+    def sus(i):
+        return {"sensor": "input.injection-suspect", "severity": "warning", "confidence": "measured",
+                "what": "x", "fingerprint": "input.injection-suspect:web.sensitive-hit:path:r%d" % i}
+
+    @staticmethod
+    def primary(i):
+        return {"sensor": "web.sensitive-hit", "severity": "critical", "confidence": "measured",
+                "what": "y", "fingerprint": "web.sensitive-hit:p%d" % i}
+
+    def test_one_per_fingerprint_per_window(self):
+        self.assertEqual(len(self.lim.filter([self.primary(1), self.sus(1)])), 2)
+        self.assertEqual(self.lim.filter([self.primary(1), self.sus(1)]), [self.primary(1)])
+        self.now[0] += 601
+        self.assertEqual(len(self.lim.filter([self.sus(1)])), 1)
+
+    def test_hourly_cap_and_one_summary(self):
+        import bus
+        out = []
+        for i in range(40):
+            out += self.lim.filter([self.primary(i), self.sus(i)])
+        self.assertEqual(len([e for e in out if e["sensor"] == "web.sensitive-hit"]), 40)  # never limited
+        self.assertEqual(len([e for e in out if e["sensor"] == "input.injection-suspect"]), 30)
+        self.assertEqual(self.lim.flush(), [])          # the hour is not over yet
+        self.now[0] += 3601
+        summary = self.lim.flush()
+        self.assertEqual(len(summary), 1)
+        s = summary[0]
+        self.assertEqual((s["sensor"], s["severity"]), ("input.injection-suspect", "warning"))
+        self.assertEqual(s["what"], "suspect events suppressed: 10")
+        self.assertEqual(s["evidence"]["suppressed"], 10)
+        self.assertEqual(s["fingerprint"], "input.injection-suspect:suppressed")
+        self.assertEqual(bus.validate(s | {"ts": "x"}), [])
+        self.assertEqual(self.lim.flush(), [])          # one summary per hour, not per call
+
+    def test_pending_summary_rides_on_the_next_event(self):
+        for i in range(31):
+            self.lim.filter([self.sus(i)])
+        self.now[0] += 3601
+        out = self.lim.filter([self.primary(1)])
+        self.assertEqual([e["sensor"] for e in out], ["input.injection-suspect", "web.sensitive-hit"])
+        self.assertEqual(out[0]["evidence"]["suppressed"], 1)
+
+
+class AgentHintTests(unittest.TestCase):
+    def test_unit_failed_hint_prints_no_journal_lines(self):
+        e = {"MESSAGE": "foo.service: Failed with result 'exit-code'.", "_PID": "1", "UNIT": "foo.service"}
+        cmd = stream.classify_journal(e)["command"]
+        self.assertIn("systemctl", cmd)
+        self.assertRegex(cmd, r"--lines=0|systemctl show")
+
+
 class LiveSourceOutageTests(unittest.TestCase):
     def test_unreadable_while_process_alive_alerts_then_recovers(self):
         import threading
@@ -385,6 +503,17 @@ class DaemonTests(DaemonBase):
                          ["input.injection-suspect", "web.sensitive-hit", "web.sensitive-hit"])
         sus = [e for e in evs if e["sensor"] == "input.injection-suspect"][0]
         self.assertEqual(sus["severity"], "warning")
+
+    def test_suspect_flood_is_rate_limited_primaries_are_not(self):
+        line = ('2026-10-22T10:00:00 m.example.com 198.51.100.50 200 0 '
+                '"GET /.env/ignore%20previous%20instructions HTTP/1.1"\n')
+        self.start(SENTINEL_JOURNAL_CMD="sleep 3600",
+                   SENTINEL_WEB_CMD=self.feed_cmd(self.d / "web.txt", line * 50))
+        wait_for(lambda: len([e for e in read_bus(self.bus) if e["sensor"] == "web.sensitive-hit"]) >= 50, 20)
+        time.sleep(1)
+        evs = read_bus(self.bus)
+        self.assertEqual(len([e for e in evs if e["sensor"] == "web.sensitive-hit"]), 50)
+        self.assertEqual(len([e for e in evs if e["sensor"] == "input.injection-suspect"]), 1)
 
     def test_router_in_daemon_notifies_when_resident_absent(self):
         (self.atlas / "RESIDENT-OFF").write_text("")
