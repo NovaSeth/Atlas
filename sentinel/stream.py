@@ -21,6 +21,7 @@ plus the bus/router variables.
 import ipaddress
 import json
 import os
+import pwd
 import re
 import shlex
 import signal
@@ -70,6 +71,14 @@ def trusted_sudo_users():
     return {u for u in re.split(r"[\s,]+", raw) if u}
 
 
+def self_user():
+    """The account this daemon runs as (the Atlas user). Its successful sudo is Atlas measuring."""
+    try:
+        return pwd.getpwuid(os.geteuid()).pw_name
+    except KeyError:
+        return ""
+
+
 def _env_num(name, default, cast=float):
     v = os.environ.get(name)
     return cast(v) if v else default
@@ -108,7 +117,10 @@ def _ev(sensor, severity, what, fingerprint, evidence, command, message=None, co
 
 
 _SSH_RE = re.compile(r"^Accepted (\S+) for (\S+) from (\S+)")
-_SUDO_RE = re.compile(r"^(\S+)\s+:.*?COMMAND=(.*)$")
+# sudo >= 1.9 pads the user name with leading spaces ("  ops : PWD=..."); a denied command puts the
+# reason first ("ops : command not allowed ; PWD=..."), a successful one starts with KEY=value fields.
+_SUDO_RE = re.compile(r"^\s*(\S+)\s+:\s*(.*?)COMMAND=(.*)$")
+_SUDO_FIELD = re.compile(r"^[A-Z_]+=")
 _FAILED_RE = re.compile(r"^(\S+?): Failed with result")
 _OOM_RE = re.compile(r"Out of memory: Killed process (\d+) \((.*?)\)")
 
@@ -143,12 +155,22 @@ def classify_journal(entry, known_ips_path=None):
         m = _SUDO_RE.match(msg)
         if not m:
             return None
-        user, cmd = m.group(1), m.group(2).strip()
+        user, fields, cmd = m.group(1), m.group(2), m.group(3).strip()
+        first = fields.split(";", 1)[0].strip()
+        reason = first if first and not _SUDO_FIELD.match(first) else ""
         exe = os.path.basename(cmd.split()[0]) if cmd.split() else "-"
-        trusted = user in trusted_sudo_users()
+        me = self_user()
+        if not reason and user == me and me != "root":
+            # the Atlas user running its allowlisted read-only commands (~300 per patrol): not news
+            return None
+        trusted = user in trusted_sudo_users() and not reason
+        what = "sudo by %s%s: %s" % (user, " (%s)" % reason[:80] if reason else "", cmd[:200])
+        evidence = {"user": user, "command": cmd[:500]}
+        if reason:
+            evidence["reason"] = reason[:120]
         ev = _ev("auth.sudo.command", "info" if trusted else "alert",
-                 "sudo by %s: %s" % (user, cmd[:200]), "auth.sudo.command:%s:%s" % (user, exe),
-                 {"user": user, "command": cmd[:500]}, "journalctl -t sudo --since -1h")
+                 what, "auth.sudo.command:%s:%s" % (user, exe),
+                 evidence, "journalctl -t sudo --since -1h")
         if not trusted:
             ev["message"] = t("stream.sudo", user=user, command=cmd[:120])
         return ev
