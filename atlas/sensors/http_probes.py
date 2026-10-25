@@ -13,7 +13,8 @@ is an event ("unknown expectation"): a new vhost must be a conscious entry, not 
 Optional key `"_extra_urls_cmd"` in the same file: a shell command printing URLs, one per line,
 each of which must answer 200 - for example the newest published post of a CMS (a front page can be
 served from cache while posts are broken). Empty or absent = no extra URLs. Keys starting with `_`
-are configuration, never hosts. No sites directory at all (no Apache) = nothing to probe, exit 0.
+are configuration, never hosts. No sites directory at all (no Apache), or only vhosts without a
+ServerName (a fresh Apache), = nothing to probe, exit 0.
 
 Read-only, no LLM. Overridable: HTTP_SITES_DIR, HTTP_EXPECTED, HTTP_FETCH_CMD (tests: a command that
 takes a URL and prints the status code), HTTP_EXTRA_URLS_CMD (replaces `_extra_urls_cmd`; the older
@@ -117,6 +118,12 @@ def main():
         print(t("http.config_unreadable", error=e), file=sys.stderr)
         return 2
     if not names:
+        if glob.glob(os.path.join(SITES, "*")):
+            # files were read and none names a host (a fresh Apache: 000-default.conf only): nothing
+            # to probe by name is a real, empty result. An empty listing stays UNKNOWN below, because
+            # glob cannot tell an empty directory from an unreadable one.
+            print(t("http.no_named_vhost", dir=SITES))
+            return 0
         print(t("http.no_server_name", dir=SITES), file=sys.stderr)
         return 2
     extra_cmd = EXTRA_CMD_ENV if EXTRA_CMD_ENV is not None else expected.get("_extra_urls_cmd", "")

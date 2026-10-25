@@ -36,6 +36,7 @@
   "atlas.show_services": "running services: {count} | containers: {containers}",
   "atlas.show_vhosts": "vhosts: {vhosts} | ports: {ports} | accounts with a shell: {accounts}",
   "atlas.show_cert": "  cert {name}: {days} days",
+  "atlas.show_not_present": "not present (skipped, fine): {tools}",
 
   "ssh.no_known_list": "cannot judge: known-IP list {path} is missing: {error}",
   "ssh.journal_error": "cannot judge: journalctl: {error}",
@@ -44,6 +45,7 @@
 
   "http.config_unreadable": "cannot read configuration: {error}",
   "http.no_server_name": "no ServerName found in {dir}",
+  "http.no_named_vhost": "HTTP probes: no vhost with a ServerName in {dir}, nothing to probe (named vhosts not present)",
   "http.unknown_expectation": "{host}: unknown expectation (got {code})",
   "http.mismatch": "{host}: got {code}, expected one of {expected}",
   "http.extra_not_200": "{url}: extra URL got {code}, expected 200",
