@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""Inspect or edit the taint gate's artifact registry.
+
+  taint-registry list [--latent]            print the recorded paths, one per line
+  taint-registry remove [--latent] <path>   remove one exact path; root only
+
+The default registry holds copies of untrusted data (artifacts.json); --latent selects the scripts that were
+written from text containing a log/journal marker and taint when executed (latent.json).
+
+Removal needs root (os.geteuid() == 0): a tainted model must never be able to launder a copy. Run it only
+while the gate switch (/etc/claude-taint-gate.off) is on, after checking that the file holds no untrusted
+data. It takes the same lock as the hook and writes atomically. Exit codes: 0 ok, 1 not root or bad usage,
+2 path not in the registry.
+"""
+import fcntl
+import json
+import os
+import sys
+
+STATE_DIR = os.path.join(os.path.expanduser("~"), ".claude", "taint")
+ARTIFACTS_FILE = "artifacts.json"
+LATENT_FILE = "latent.json"
+
+
+def _dir():
+    return os.environ.get("TAINT_STATE_DIR") or STATE_DIR
+
+
+def _load(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            d = json.loads(f.read(4 << 20))
+    except FileNotFoundError:
+        return {"paths": []}
+    if not isinstance(d, dict) or not isinstance(d.get("paths"), list):
+        raise ValueError("registry file is malformed")
+    return d
+
+
+def main(argv):
+    argv = list(argv)
+    name = ARTIFACTS_FILE
+    if "--latent" in argv:
+        argv.remove("--latent")
+        name = LATENT_FILE
+    if not argv or argv[0] not in ("list", "remove") or (argv[0] == "list") != (len(argv) == 1) \
+            or (argv[0] == "remove" and len(argv) != 2):
+        sys.stderr.write("usage: taint-registry list [--latent] | remove [--latent] <path>\n")
+        return 1
+    path = os.path.join(_dir(), name)
+    if argv[0] == "list":
+        try:
+            for p in _load(path)["paths"]:
+                if isinstance(p, str):
+                    print(p)
+        except (OSError, ValueError) as e:
+            sys.stderr.write("taint-registry: %s\n" % e)
+            return 1
+        return 0
+    if os.geteuid() != 0:
+        sys.stderr.write("taint-registry: remove needs root (a tainted model must not launder a copy)\n")
+        return 1
+    target = argv[1]
+    lock = os.open(os.path.join(_dir(), ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            d = _load(path)
+        except (OSError, ValueError) as e:
+            sys.stderr.write("taint-registry: %s\n" % e)
+            return 1
+        if target not in d["paths"]:
+            sys.stderr.write("taint-registry: not in the registry: %s\n" % target)
+            return 2
+        d["paths"] = [p for p in d["paths"] if p != target]
+        tmp = "%s.%d.tmp" % (path, os.getpid())
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+        os.replace(tmp, path)
+    finally:
+        os.close(lock)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -1,0 +1,51 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -S ${CLAUDE_PLUGIN_ROOT}/hooks/taint_gate.py",
+            "timeout": 5,
+            "onFailure": "continue"
+          }
+        ]
+      },
+      {
+        "matcher": "^(?!(Read|Grep|Glob)$).*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -S ${CLAUDE_PLUGIN_ROOT}/hooks/taint_gate.py",
+            "timeout": 5,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -S ${CLAUDE_PLUGIN_ROOT}/hooks/taint_gate.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I -S ${CLAUDE_PLUGIN_ROOT}/hooks/taint_gate.py",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

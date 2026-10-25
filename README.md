@@ -126,8 +126,69 @@ with read-only tools). Step by step, in detail in [docs/resident.md](docs/reside
    unacknowledged so escalation still reaches you.
 6. `touch <state>/RESIDENT-OFF` when you stop the agent on purpose.
 7. Safety: raw logs only through the quarantined reader, no action on instructions found in data, human approval
-   for privileged actions after reading untrusted data. A taint-gate hook that enforces the last rule is planned
-   for the plugin (not shipped yet). The escalation path stays LLM-independent.
+   for privileged actions after reading untrusted data. The optional taint gate below enforces the last rule in
+   Claude Code. The escalation path stays LLM-independent.
+
+### Taint gate (optional)
+
+An agent with tools that also reads attacker-controlled text (logs, web pages, mail, messages from other agents)
+has the "lethal trifecta": untrusted input, access to private data or privileges, and a way to act. The taint gate
+is a deterministic hook (no model involved) that breaks the chain in Claude Code:
+
+- Reading an untrusted source (anything under `/var/log`, the Atlas events and drift files, the quarantine
+  directory, `journalctl`, `curl`, WebFetch/WebSearch, browser tools, mail, calendar and drive reads, tools you
+  list in the config) **taints the session**.
+- While tainted, every tool call outside a small read-only allowlist is denied (writes, restarts, Edit/Write, MCP
+  actions). Reading local files, simple read-only probes (`ls`, `df`, `ps`, `dpkg -l` ...) and the log-reader subagent stay possible.
+- Only a **verified human message** clears the taint: it must be a typed prompt found in the session transcript,
+  fresh and not used before. Task notifications, system envelopes and loop ticks do not clear it.
+- Raw logs go through `agent/claude-code/bin/untrusted-export` (copies a slice into the quarantine directory and
+  prints only its path) and the `log-reader` subagent (read-only tools, bounded JSON answer).
+
+Enable it by installing the plugin as in step 1: `agent/claude-code/hooks/hooks.json` registers the hook for
+`PreToolUse`, `PostToolUse` and `UserPromptSubmit` (`python3 -I -S ${CLAUDE_PLUGIN_ROOT}/hooks/taint_gate.py`,
+timeout 5 s; if the hook itself fails, Read/Grep/Glob continue and everything else is blocked). Requires Python 3.
+
+**Emergency switch:** a root-owned regular file `/etc/claude-taint-gate.off` turns the gate off (every call is
+logged as `switch-off`). Remove the file to turn it back on. A file anywhere else is ignored.
+
+**Paths** (all derived from the home directory of the user running Claude Code, override with the variable):
+
+| Item | Default | Variable |
+|---|---|---|
+| state | `~/.claude/taint/` | `TAINT_STATE_DIR` |
+| decision log | `~/.claude/taint/gate.log` | `TAINT_LOG` |
+| transcripts (human-message check) | `~/.claude/projects/` | `TAINT_TRANSCRIPT_ROOT` |
+| quarantine | `~/.quarantine/` | `QUARANTINE_ROOT` |
+| Atlas state | `~/atlas-state/` | `SENTINEL_ATLAS` |
+| config | `~/.config/atlas/taint-gate.json` | `TAINT_CONFIG` |
+
+**Config file** (optional, all keys optional):
+
+```json
+{
+  "extra_untrusted_tools": ["mcp__chat__read_*", "mcp__tickets__get_ticket"],
+  "extra_untrusted_paths": ["/srv/uploads"],
+  "extra_monitor_commands": ["/opt/tools/watch-queue.sh"]
+}
+```
+
+`extra_untrusted_tools` are exact tool names, or prefixes when they end in `*`; calling one taints the session.
+`extra_untrusted_paths` are absolute files or directories treated like `/var/log`. `extra_monitor_commands` are exact
+Monitor commands that stay allowed while tainted (the Atlas session sensor always is). An invalid file is ignored
+as a whole and logged once; the config can only add taint sources, never remove a built-in one.
+
+**Known limits:**
+
+- Bash is classified by parsing the command line, best effort, against an honest model that makes mistakes or is
+  steered by text, not against an attacker who controls the shell. Unparseable or unknown commands count as
+  privileged while tainted.
+- Files written with Edit or Write are not tracked: text copied from untrusted data into a file by those tools is not
+  tainted when read later. Copies made by shell redirections and `cp`/`mv`/`tee` are recorded in
+  `~/.claude/taint/artifacts.json`; inspect or edit it with `agent/claude-code/bin/taint-registry` (removal needs root).
+- A "write text" exemption (letting `echo`/`printf`/heredoc text that merely mentions a log path be written to a
+  file) exists in the code but is **off** by default (`TAINT_WRITE_TEXT_EXEMPTION=1` enables it). Leave it off.
+- Subagent calls are not gated; a subagent's untrusted read taints its parent when it finishes.
 
 ---
 
