@@ -77,6 +77,18 @@ class InstallDryRun(unittest.TestCase):
         r = subprocess.run(["bash", str(INSTALL), "--dry-run", "--state", "relative/dir"], capture_output=True, text=True)
         self.assertEqual(r.returncode, 2)
 
+    def test_reinstall_never_blesses_over_an_existing_baseline(self):
+        # seen on the test VM: a second `install.sh --yes` silently accepted the current state (with
+        # any drift, an intruder's account included) as the new baseline
+        self.state.mkdir()
+        (self.state / "baseline.json").write_text("{}")
+        out = self.run_install("--yes")
+        plan = "\n".join(self.planned(out))
+        self.assertIn("atlas.py snap", plan)
+        self.assertNotIn("atlas.py bless", plan)
+        self.assertIn("keeping the existing baseline", out)
+        self.assertIn("atlas.py check", out)
+
     def test_uninstall_dry_run(self):
         r = subprocess.run(["bash", str(UNINSTALL), "--dry-run", "--state", str(self.state), "--user", "atlas-test-nobody"],
                            capture_output=True, text=True, timeout=60)
