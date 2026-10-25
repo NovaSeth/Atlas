@@ -2,9 +2,11 @@
 """Untrusted text: request paths, SSH user names, sudo command lines, process names, URLs.
 
 Anything an outsider (or a local user) can write ends up in log lines, and log lines end up on the
-bus, in ALERT and in front of an AI agent. Two jobs, stdlib only:
+bus, in ALERT and in front of an AI agent. The helpers (stdlib only):
 
   clean(text, limit)  printable ASCII only, whitespace collapsed, at most `limit` characters
+  clean_unicode(t, n) for human-facing text in any language: drops only control, format (zero-width,
+                      bidi) and ANSI sequences, keeps letters such as ąćęłńóśźż (session-sensor.sh)
   quote(text, limit)  clean() wrapped in double quotes with `"` and `\\` escaped: the text is shown
                       as DATA, and a reader can see where it starts and ends
   suspicious(text)    rule ids of a small heuristic set that flags instruction-like text
@@ -43,6 +45,8 @@ import re
 import shlex
 import signal
 import subprocess
+import sys
+import unicodedata
 import urllib.parse
 
 DEFAULT_LIMIT = 80
@@ -149,6 +153,28 @@ def quote(text, limit=DEFAULT_LIMIT):
     return '"' + esc + '"'
 
 
+def clean_unicode(text, limit=300):
+    """For text addressed to humans in any language (the ALERT excerpt): keeps every printable character
+    (letters such as ąćęłńóśźż, digits, punctuation, spaces), removes ANSI escape sequences, control
+    characters (category Cc; newline and carriage return become a space, tab stays) and format
+    characters (category Cf: zero-width, bidi overrides and isolates, BOM). At most `limit` characters
+    (characters, not bytes), cut without a marker like `head -c` did."""
+    s = _ANSI.sub("", _text(text))
+    out = []
+    for ch in s:
+        if ch in "\n\r\u2028\u2029":
+            out.append(" ")
+        elif ch == "\t":
+            out.append(ch)
+        elif unicodedata.category(ch) in ("Cc", "Cf", "Cs"):
+            continue
+        else:
+            out.append(ch)
+        if len(out) >= limit:
+            break
+    return "".join(out)
+
+
 def _decode(raw):
     s = _APACHE_ESC.sub(lambda m: bytes.fromhex(m.group(0).replace("\\x", "")).decode("utf-8", "replace"), raw)
     for _ in range(2):  # double URL encoding (%2520) is a classic filter evasion
@@ -216,3 +242,19 @@ def suspicious(text):
     if _classifier(raw):
         hits.append("classifier")
     return hits
+
+
+def main(argv):
+    """CLI for shell callers: `untrusted.py clean-unicode [limit]` filters stdin (UTF-8, invalid bytes
+    replaced) to stdout. Used by session-sensor.sh for the ALERT excerpt."""
+    if len(argv) >= 1 and argv[0] == "clean-unicode":
+        limit = int(argv[1]) if len(argv) > 1 else 300
+        data = sys.stdin.buffer.read().decode("utf-8", "replace")
+        sys.stdout.buffer.write(clean_unicode(data, limit).encode("utf-8"))
+        return 0
+    print("usage: untrusted.py clean-unicode [limit]", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

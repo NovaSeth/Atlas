@@ -66,7 +66,7 @@ The installer (idempotent; defaults `--code /opt/atlas --state /var/lib/atlas --
 
 1. checks the prerequisites and prints what is missing;
 2. creates the unprivileged `atlas` user (groups `adm`, `systemd-journal` for log access);
-3. copies the code to `--code` and creates the state directory with `sentinel.env`, `known-ips.txt` and
+3. copies the code to `--code` (a re-install replaces every product directory there, so removed files do not linger) and creates the state directory with `sentinel.env`, `known-ips.txt` and
    `http-expected.json` from `examples/` (an existing file is never overwritten);
 4. renders and installs the systemd units (`sentinel-stream.service`, `sentinel-escalation.timer`) and starts them;
 5. installs the Apache log snippet only with `--with-apache`;

@@ -51,6 +51,7 @@ done
 case $CODE in /*) ;; *) echo "install.sh: --code must be an absolute path" >&2; exit 2 ;; esac
 case $STATE in /*) ;; *) echo "install.sh: --state must be an absolute path" >&2; exit 2 ;; esac
 CODE=${CODE%/}; STATE=${STATE%/}
+[ -n "$CODE" ] || { echo "install.sh: --code must not be /" >&2; exit 2; }
 
 run() {   # every action that changes the system goes through here
     if [ "$DRY" -eq 1 ]; then
@@ -126,9 +127,14 @@ if [ "$(realpath -m "$CODE")" = "$REPO" ]; then
 else
     say "copying the code to $CODE"
     run install -d -m 0755 "$CODE"
-    run cp -a "$REPO/atlas" "$REPO/sentinel" "$REPO/i18n" "$REPO/examples" "$REPO/docs" \
-        "$REPO/agent" "$REPO/AGENTS.md" \
-        "$REPO/README.md" "$REPO/LICENSE" "$REPO/install.sh" "$REPO/uninstall.sh" "$CODE/"
+    # Every top-level entry that belongs to the product (tests/test_install.py checks that nothing tracked
+    # is forgotten). A re-install REPLACES each entry, so a file removed from the product (an old skill,
+    # a renamed sensor) does not linger in the code dir. State lives elsewhere and is never touched here.
+    PRODUCT=(atlas sentinel i18n examples docs agent AGENTS.md README.md LICENSE install.sh uninstall.sh)
+    for e in "${PRODUCT[@]}"; do
+        if [ -e "$CODE/$e" ] || [ -L "$CODE/$e" ]; then run rm -rf "${CODE:?}/$e"; fi
+    done
+    run cp -a "${PRODUCT[@]/#/$REPO/}" "$CODE/"
 fi
 
 # --- 4. State directory and the one config file --------------------------------------------------
