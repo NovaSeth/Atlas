@@ -42,6 +42,7 @@ class InstallDryRun(unittest.TestCase):
         self.assertFalse(self.state.exists(), "a dry run created the state directory")
         self.assertIn("useradd --system", plan)                                   # user created when missing
         self.assertIn("cp -a %s/atlas" % ROOT, plan)                              # code copied to /opt/atlas
+        self.assertIn("%s/LICENSE" % ROOT, plan)                                  # the MIT notice travels with the code
         self.assertIn("install -d -m 0750 -o atlas-test-nobody", plan)
         self.assertIn("%s/examples/sentinel.env %s/sentinel.env" % (ROOT, self.state), plan)
         for u in ("sentinel-stream.service", "sentinel-escalation.service", "sentinel-escalation.timer"):

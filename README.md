@@ -13,7 +13,7 @@ Everything below runs without a language model: stdlib Python 3 and bash, cron a
 server (the *resident*, optional) makes the system complete: it is woken in seconds, investigates, repairs and gives
 the human a verdict instead of a raw alarm. Without a resident, Atlas still detects and still calls the human.
 
-Licence: not yet chosen.
+Licence: MIT (see LICENSE).
 
 ---
 
