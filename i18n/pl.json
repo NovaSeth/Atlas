@@ -61,8 +61,8 @@
   "esc.alert_unacked": "ALARM BEZ ODBIORCY od {age} min — nikt go nie potwierdził. Treść:\n{body}\n",
   "esc.stream_missing": "STRUMIEŃ ZDARZEŃ MILCZY: brak pliku {file} — demon sentinel-stream nie wystartował albo go skasowano.\nSprawdź: systemctl status sentinel-stream\n",
   "esc.stream_silent": "STRUMIEŃ ZDARZEŃ MILCZY od {age} min (próg {limit}). Demon sentinel-stream przestał bić serce.\nSprawdź: systemctl status sentinel-stream\n",
-  "esc.subject": "[sentinel] SERWER: cisza w warstwie nadzoru ({kind})",
-  "esc.body": "Sentinel wykrył, że warstwa nadzoru przestała odpowiadać. Ten mail przyszedł Z POMINIĘCIEM\nagenta LLM — właśnie dlatego, że agent może być tym, co przestało działać.\n\n{problem}\n--\nmaszyna:  {host}, uptime {uptime}\nzasoby:   dysk {disk}, RAM {ram}Mi wolne\nczas:     {time}\n\nCo sprawdzić ręcznie:\n  tail {state}/heartbeat.log\n  cat  {state}/ALERT{hints}",
+  "esc.subject": "[sentinel] SERWER wymaga uwagi ({kind})",
+  "esc.body": "Sentinel wykrył problem, którego nikt nie obsłużył na czas, albo który dotyczy samego nadzoru.\nTa wiadomość przyszła Z POMINIĘCIEM agenta LLM, właśnie dlatego, że agent może być tym, co przestało działać.\n\n{problem}\n--\nmaszyna:  {host}, uptime {uptime}\nzasoby:   dysk {disk}, RAM {ram}Mi wolne\nczas:     {time}\n\nCo sprawdzić ręcznie:\n  tail {state}/heartbeat.log\n  cat  {state}/ALERT{hints}",
   "esc.hint_unit": "\n  systemctl status {unit}",
   "esc.hint_screen": "\n  screen -r {screen}",
 

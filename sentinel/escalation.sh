@@ -11,8 +11,9 @@
 # long. If a model call ever appears here - the goal is lost.
 #
 # Configuration ($SENTINEL_ATLAS/sentinel.env, the environment wins):
-#   SENTINEL_EMAIL          recipient; empty = "no recipient configured", exit 2 (UNKNOWN), never ok
-#   SENTINEL_NOTIFY_CMD     optional extra channel, called as <cmd> "<subject>" "<body>"
+#   SENTINEL_EMAIL          mail recipient
+#   SENTINEL_NOTIFY_CMD     notify channel, called as <cmd> "<subject>" "<body>"
+#                           (both empty = "no recipient configured", exit 2 (UNKNOWN), never ok)
 #   SENTINEL_RESIDENT_UNIT  systemd unit of the AI resident (empty = no resident: check skipped)
 #   SENTINEL_RESIDENT_SCREEN  screen session name of the AI resident (empty = not checked)
 #   SENTINEL_LANG           language of the mail texts (en default, pl available)
@@ -47,7 +48,7 @@ heartbeat() { echo "$(date -Is) $*" >> "$LOG"; tail -n 500 "$LOG" > "$LOG.tmp" &
 shout() {   # $1=kind  $2=subject  $3=body
     local marker="$STATE/sent-$1" sent=0
     if [ -f "$marker" ] && [ $(( now - $(stat -c %Y "$marker") )) -lt $(( QUIET_BETWEEN_MAILS * 3600 )) ]; then
-        heartbeat "quiet: $1 (mail sent < ${QUIET_BETWEEN_MAILS}h ago)"
+        heartbeat "quiet: $1 (notified < ${QUIET_BETWEEN_MAILS}h ago)"
         return 0
     fi
     if [ -n "$HUMAN" ]; then
@@ -175,8 +176,9 @@ if [ "${#PTEXT[@]}" -gt 0 ]; then
 fi
 
 # No recipient = nobody can be told: that is never "ok", whatever the checks found.
-if [ -z "$HUMAN" ]; then
-    heartbeat "UNKNOWN: no recipient configured (SENTINEL_EMAIL is empty)${KINDS:+; PROBLEM: $KINDS}"
+# A configured notify command is a recipient too (a phone push, a chat webhook); only both empty is UNKNOWN.
+if [ -z "$HUMAN" ] && [ -z "$NOTIFY_CMD" ]; then
+    heartbeat "UNKNOWN: no recipient configured (SENTINEL_EMAIL and SENTINEL_NOTIFY_CMD are empty)${KINDS:+; PROBLEM: $KINDS}"
     exit 2
 fi
 if [ "${#PTEXT[@]}" -gt 0 ]; then

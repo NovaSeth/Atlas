@@ -74,7 +74,8 @@ Every sensor obeys all of this; code that does not is a script that sometimes sa
 - `escalation.sh` (systemd timer, every 10 minutes, no LLM) mails the human when the patrol heartbeat is older
   than 45 minutes, the resident is configured but dead, an alert is unacknowledged for more than 45 minutes, or the
   stream heartbeat is older than 5 minutes. One mail per kind per 6 hours; a marker lives only while its kind is a
-  problem. With no recipient configured it exits 2 and says so in its log: never "ok".
+  problem. With no recipient configured (neither a mail address nor a notify command) it exits 2 and says so in its
+  log: never "ok".
 - `session-sensor.sh` runs under the AI agent's monitor tool and prints one line per **change** (see
   [resident.md](resident.md)).
 

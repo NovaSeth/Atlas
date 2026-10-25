@@ -27,7 +27,7 @@ one-off override is `VAR=value command`, and cron needs nothing but `SENTINEL_AT
 
 | Variable | Default | Used by | Meaning |
 |---|---|---|---|
-| `SENTINEL_EMAIL` | *(empty)* | escalation, router | Recipient of mails (`mail -s`). Empty: escalation logs `UNKNOWN: no recipient configured` and exits 2 - never a silent "ok". |
+| `SENTINEL_EMAIL` | *(empty)* | escalation, router | Recipient of mails (`mail -s`). If both this and `SENTINEL_NOTIFY_CMD` are empty, escalation logs `UNKNOWN: no recipient configured` and exits 2 - never a silent "ok". |
 | `SENTINEL_NOTIFY_CMD` | *(empty)* | escalation, router | Extra channel, called as `<cmd> "<subject>" "<body>"` (word-split, no shell). Escalation calls it in addition to mail; the router uses it instead of mail. It receives `SENTINEL_EMAIL` in its environment. A failure never stops the mail. |
 | `SENTINEL_LANG` | `en` | everything human-facing | `en` or `pl`. A key missing in a catalog falls back to English. |
 | `SENTINEL_RESIDENT_UNIT` | *(empty)* | escalation, router | systemd unit of the AI resident (e.g. `agent.service`). |
