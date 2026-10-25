@@ -125,6 +125,9 @@ def local_listdir(path, section="local_files"):
 TOOL_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 
+OPTIONAL_TOOLS = ("certbot", "docker", "fail2ban-client", "ufw")
+
+
 def have(tool):
     return shutil.which(tool, path=TOOL_PATH) is not None
 
@@ -560,10 +563,14 @@ def vitals():
         "mem_available_mb": mem,
         "load": run("cut -d' ' -f1-3 /proc/loadavg"),
         "uptime": run("uptime -p"),
-        "banned_sshd": run("sudo fail2ban-client status sshd 2>/dev/null | grep -oP 'Currently banned:\\s+\\K\\d+'"),
+        # only when installed: sudo logs "command not allowed" for a binary that does not exist
+        "banned_sshd": run("sudo fail2ban-client status sshd 2>/dev/null | grep -oP 'Currently banned:\\s+\\K\\d+'")
+        if have("fail2ban-client") else "",
         "failed_units": run("systemctl --failed --no-legend --plain | wc -l"),
         "silent_failures": sf,
         "silent_unknown": su,
+        # optional tools that are not installed: skipped on purpose, shown by `show` (never diffed)
+        "not_present": [tool for tool in OPTIONAL_TOOLS if not have(tool)],
     }
 
 
@@ -698,6 +705,8 @@ def main():
                 accounts=", ".join(snap["accounts"])))
         for d, c in sorted(snap["certs"].items(), key=lambda x: -1 if x[1]["days"] is None else x[1]["days"])[:3]:
             print(t("atlas.show_cert", name=d, days=c["days"] if c["days"] is not None else "?"))
+        if v.get("not_present"):
+            print(t("atlas.show_not_present", tools=", ".join(v["not_present"])))
         return 0
     if snap["vitals"].get("measure_errors"):
         # human-facing (lands in ALERT): a failed measurement is UNKNOWN, never an empty inventory
