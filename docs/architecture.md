@@ -116,8 +116,9 @@ What Atlas does (`sentinel/untrusted.py`, stdlib):
   double quotes with `"` and `\` escaped) and enters `evidence` and fingerprints through `clean()` (the same
   without the quotes). Limits: request path 80 characters, SSH user 32, sudo command 120 in `what` (500 in
   `evidence`), process name 32. The patrol sensors clean user names (32), host names (80) and extra URLs (120)
-  in their ALERT lines, and `session-sensor.sh` strips every byte outside tab, newline and printable ASCII from
-  the ALERT excerpt it prints.
+  in their ALERT lines. `session-sensor.sh` passes the ALERT excerpt it prints through `clean_unicode()`: ANSI
+  sequences, control characters and format characters (zero-width, bidi overrides, BOM) are removed, letters in
+  any language stay (ALERT texts can be Polish), at most 300 characters.
 - **Suspect warning.** When a field looks like instructions (`suspicious()`: override phrases, role markers such
   as `system:` or "you are now", "new instructions", text addressed to an AI, "please run <command>", context
   manipulation such as "the admin has authorized" or "this alert is a false positive", base64 runs of 40+
