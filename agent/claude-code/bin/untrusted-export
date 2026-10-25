@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# untrusted-export: copy an untrusted log slice into a fresh quarantine directory and print
+# ONLY its path. The content never reaches stdout: the main session must not read it; hand the path
+# to the log-reader subagent (the log-reader subagent of the atlas-resident plugin), which answers with bounded JSON.
+#
+#   untrusted-export journal <name> [journalctl args...]   e.g. journal ssh -u ssh --since -2h
+#   untrusted-export file <name> <path> [lines]             e.g. file apache /var/log/apache2/x.log 5000
+#
+# Output: ${QUARANTINE_ROOT:-$HOME/.quarantine}/<UTC yyyymmddThhmmssZ>[-n]/<name>.log
+# (root and dir 700, file 600). Unreadable sources under /var/log are read through `sudo -n`.
+set -euo pipefail
+umask 077
+
+usage() {
+  cat >&2 <<'EOF'
+usage: untrusted-export journal <name> [journalctl args...]
+       untrusted-export file <name> <path> [lines]   (default: last 5000 lines; .gz is decompressed)
+Writes <quarantine>/<UTC ts>/<name>.log and prints only that path. Never cat it in the main
+session: give the path to the log-reader subagent.
+EOF
+  exit 2
+}
+
+die() { echo "untrusted-export: $*" >&2; exit 2; }
+
+[ "$#" -ge 2 ] || usage
+mode=$1
+name=$2
+shift 2
+[[ "$name" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$ ]] || die "name must be 1-64 chars of [A-Za-z0-9._-]"
+
+case "$mode" in
+  journal) ;;
+  file)
+    { [ "$#" -ge 1 ] && [ "$#" -le 2 ]; } || usage
+    src=$1
+    lines=${2:-5000}
+    [[ "$lines" =~ ^[0-9]{1,7}$ ]] || die "lines must be a number"
+    ;;
+  *) usage ;;
+esac
+
+root=${QUARANTINE_ROOT:-$HOME/.quarantine}
+mkdir -p -m 700 "$root"
+chmod 700 "$root"
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+dir="$root/$ts"
+n=0
+until mkdir -m 700 "$dir" 2>/dev/null; do   # one export, one fresh directory; never reuse
+  n=$((n + 1))
+  [ "$n" -lt 100 ] || die "cannot create a quarantine directory under $root"
+  dir="$root/$ts-$n"
+done
+out="$dir/$name.log"
+
+set -o noclobber
+rc=0
+if [ "$mode" = journal ]; then
+  journalctl --no-pager "$@" >"$out" 2>&1 || rc=$?
+else
+  reader=()
+  # Resolve ONCE; everything below uses the resolved path, never "$src" (finding 13).
+  real=$(realpath -e -- "$src" 2>/dev/null) || real=""
+  if [ -z "$real" ]; then
+    rmdir "$dir"
+    die "no such file (or not resolvable as $(id -un)): $src"
+  fi
+  if [ ! -r "$real" ]; then
+    # sudo only for logs: the exporter must not turn into a way to copy root-only files
+    # (/etc/shadow, keys) into a user-readable place.
+    case "$real" in
+      /var/log/*) ;;
+      *) rmdir "$dir"; die "cannot read $src (sudo is used only for paths under /var/log)" ;;
+    esac
+    # Re-resolve as root right before the read: the resolved path must still be itself (no symlink
+    # swapped in). No directory under /var/log is writable by the invoking user (check this on your host), so the
+    # path cannot change between this check and the read below without root.
+    again=$(sudo -n realpath -e -- "$real" 2>/dev/null) || again=""
+    if [ "$again" != "$real" ]; then
+      rmdir "$dir"
+      die "the path changed during the export; refused"
+    fi
+    reader=(sudo -n)
+  fi
+  if [[ "$real" == *.gz ]]; then
+    "${reader[@]}" zcat -- "$real" 2>&1 | tail -n "$lines" >"$out" || rc=$?
+  else
+    "${reader[@]}" tail -n "$lines" -- "$real" >"$out" 2>&1 || rc=$?
+  fi
+fi
+chmod 600 "$out"
+printf '%s\n' "$out"
+if [ "$rc" -ne 0 ]; then
+  echo "untrusted-export: the export command failed (exit $rc); its message is in the file" >&2
+  exit "$rc"
+fi
