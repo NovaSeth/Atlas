@@ -127,6 +127,7 @@ else
     say "copying the code to $CODE"
     run install -d -m 0755 "$CODE"
     run cp -a "$REPO/atlas" "$REPO/sentinel" "$REPO/i18n" "$REPO/examples" "$REPO/docs" \
+        "$REPO/agent" "$REPO/AGENTS.md" \
         "$REPO/README.md" "$REPO/LICENSE" "$REPO/install.sh" "$REPO/uninstall.sh" "$CODE/"
 fi
 
