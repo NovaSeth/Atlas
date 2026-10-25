@@ -128,7 +128,9 @@ while true; do
             [ "$(stat -c %Y "$ATLAS/ALERT.acked" 2>/dev/null || echo 0)" -ge "$(stat -c %Y "$ATLAS/ALERT" 2>/dev/null || echo 0)" ] && acked=1
         if [ "$acked" -eq 0 ]; then
             body=$(tail -n +2 "$ATLAS/ALERT")
-            cur="ATLAS ALERT: $(printf '%s' "$body" | head -c 300 | tr '\n' ' ')"
+            # printable ASCII, tab and newline only: ESC sequences, zero-width and bidi bytes from
+            # untrusted text in ALERT must not reach the terminal or the agent reading this line
+            cur="ATLAS ALERT: $(printf '%s' "$body" | LC_ALL=C tr -cd '\11\12\40-\176' | head -c 300 | tr '\n' ' ')"
             key="alert:$(printf '%s' "$body" | sha256sum | cut -d' ' -f1)"
         fi
     fi
