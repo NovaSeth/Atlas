@@ -127,6 +127,17 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual((ev["sensor"], ev["severity"]), ("kernel.oom-kill", "alert"))
         self.assertIsNone(self.cj(dict(e, _TRANSPORT="syslog")))
 
+    def test_long_paths_sharing_a_prefix_keep_distinct_fingerprints_after_bus_sanitizing(self):
+        # Re-review 2026-10-25: an all-digit hex digest looked like an epoch to the bus fingerprint sanitizer and was
+        # replaced by "N", so two different leaks dedup into one again. The digest must survive sanitize_fp.
+        import bus
+        line = '2026-10-22T10:00:00 www.example.com 198.51.100.50 200 512 "GET %s HTTP/1.1"'
+        a = stream.classify_web(line % ("/.env/" + "a" * 80 + "307"))
+        b = stream.classify_web(line % ("/.env/" + "a" * 80 + "397"))
+        fa, fb = bus.sanitize_fp(a["fingerprint"]), bus.sanitize_fp(b["fingerprint"])
+        self.assertNotEqual(fa, fb)
+        self.assertEqual(fa, a["fingerprint"], "the fingerprint must already be bus-safe")
+
     def test_web_sensitive_hit_severity(self):
         line = '2026-10-22T10:00:00 www.example.com 198.51.100.50 %s %s "GET /wp-config.php HTTP/1.1"'
         self.assertEqual(stream.classify_web(line % (200, 512))["severity"], "critical")
