@@ -126,7 +126,12 @@ What Atlas does (`sentinel/untrusted.py`, stdlib):
   `input.injection-suspect`, severity `warning`, `what` = `instruction-like text in <field> from <source>:
   <rule ids>`, evidence `{field, source, rules, sample}` (the sample is cleaned and at most 40 characters),
   fingerprint `input.injection-suspect:<sensor>:<field>:<first rule id>`. A warning never wakes the session and
-  never blocks the original event; its alert semantics are unchanged.
+  never blocks the original event; its alert semantics are unchanged. The attacker controls how often these
+  are written, so the stream limits them before the bus: at most one per fingerprint per 10 minutes and 30 per
+  hour, then one `suspect events suppressed: <count>` summary per hour. Primary events are never limited.
+  An HTTP method outside the standard set is checked as well (and shown cut to 16 characters).
+- **Fingerprints of long paths.** The displayed path is cut at 80 characters; the web fingerprint adds a
+  12-character SHA-256 digest of the full path (query removed), so two leaks with one prefix stay two events.
 - **Optional classifier.** `ATLAS_INJECTION_CLASSIFIER_CMD` (off by default) names a local command that gets the
   raw text on stdin and exits 1 for "suspicious" (2 s timeout; any other outcome is ignored). Nothing leaves the
   host unless that command sends it.

@@ -18,6 +18,9 @@ SYSTEMD_DIR=${ATLAS_SYSTEMD_DIR:-/etc/systemd/system}
 SUDOERS_DIR=${ATLAS_SUDOERS_DIR:-/etc/sudoers.d}
 APACHE_CONF_DIR=${ATLAS_APACHE_CONF_DIR:-/etc/apache2/conf-available}
 UNITS=(sentinel-stream.service sentinel-escalation.service sentinel-escalation.timer)
+# Every top-level entry that belongs to the product (tests/test_install.py checks that nothing tracked is
+# forgotten). A (re)install REPLACES each of them in the code dir, so they must never hold state.
+PRODUCT=(atlas sentinel i18n examples docs agent AGENTS.md README.md LICENSE install.sh uninstall.sh)
 export PATH="$PATH:/usr/sbin:/sbin"
 
 usage() {
@@ -52,6 +55,22 @@ case $CODE in /*) ;; *) echo "install.sh: --code must be an absolute path" >&2; 
 case $STATE in /*) ;; *) echo "install.sh: --state must be an absolute path" >&2; exit 2 ;; esac
 CODE=${CODE%/}; STATE=${STATE%/}
 [ -n "$CODE" ] || { echo "install.sh: --code must not be /" >&2; exit 2; }
+# Code and state must not overlap: the code step replaces product directories wholesale, and a state
+# dir inside one of them (e.g. --state /opt/atlas/atlas) would lose its baseline, config and history.
+# Real paths, so a symlink cannot hide the overlap. Checked before any action, dry run included.
+RCODE=$(realpath -m "$CODE"); RSTATE=$(realpath -m "$STATE")
+case "$RCODE/" in
+    "$RSTATE"/*) echo "install.sh: refusing: the code dir $CODE is inside (or equal to) the state dir $STATE;" \
+                      "keep state in its own directory" >&2; exit 2 ;;
+esac
+if [ "$RCODE" != "$REPO" ]; then
+    for e in "${PRODUCT[@]}"; do
+        case "$RSTATE/" in
+            "$RCODE/$e"/*) echo "install.sh: refusing: the state dir $STATE is inside $CODE/$e, which the install" \
+                                "replaces; keep state in its own directory (default /var/lib/atlas)" >&2; exit 2 ;;
+        esac
+    done
+fi
 
 run() {   # every action that changes the system goes through here
     if [ "$DRY" -eq 1 ]; then
@@ -127,14 +146,25 @@ if [ "$(realpath -m "$CODE")" = "$REPO" ]; then
 else
     say "copying the code to $CODE"
     run install -d -m 0755 "$CODE"
-    # Every top-level entry that belongs to the product (tests/test_install.py checks that nothing tracked
-    # is forgotten). A re-install REPLACES each entry, so a file removed from the product (an old skill,
-    # a renamed sensor) does not linger in the code dir. State lives elsewhere and is never touched here.
-    PRODUCT=(atlas sentinel i18n examples docs agent AGENTS.md README.md LICENSE install.sh uninstall.sh)
-    for e in "${PRODUCT[@]}"; do
-        if [ -e "$CODE/$e" ] || [ -L "$CODE/$e" ]; then run rm -rf "${CODE:?}/$e"; fi
+    # Stage the new tree next to the target (same file system), then swap entry by entry with two
+    # renames: the code dir never lacks an entry for longer than a rename, a file removed from the
+    # product does not linger, and files in the code dir that are not product entries are left alone.
+    NEW_DIR="$CODE/.atlas-install-new"; OLD_DIR="$CODE/.atlas-install-old"
+    for d in "$NEW_DIR" "$OLD_DIR"; do   # leftovers of an interrupted run
+        if [ -e "$d" ] || [ -L "$d" ]; then run rm -rf "$d"; fi
     done
-    run cp -a "${PRODUCT[@]/#/$REPO/}" "$CODE/"
+    run install -d -m 0755 "$NEW_DIR" "$OLD_DIR"
+    run cp -a "${PRODUCT[@]/#/$REPO/}" "$NEW_DIR/" || {
+        echo "install.sh: copying the code failed; $CODE is unchanged" >&2; exit 1; }
+    for e in "${PRODUCT[@]}"; do
+        if [ -e "$CODE/$e" ] || [ -L "$CODE/$e" ]; then
+            run mv "$CODE/$e" "$OLD_DIR/$e" || { echo "install.sh: cannot move $CODE/$e aside" >&2; exit 1; }
+        fi
+        run mv "$NEW_DIR/$e" "$CODE/$e" || {
+            [ -e "$OLD_DIR/$e" ] && mv "$OLD_DIR/$e" "$CODE/$e"
+            echo "install.sh: cannot put the new $e in place; the old one was restored" >&2; exit 1; }
+    done
+    run rm -rf "$NEW_DIR" "$OLD_DIR"
 fi
 
 # --- 4. State directory and the one config file --------------------------------------------------

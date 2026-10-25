@@ -18,6 +18,7 @@ SENTINEL_STATE_DIR, SENTINEL_JOURNAL_CMD, SENTINEL_WEB_CMD, SENTINEL_UNREADABLE_
 SENTINEL_RESTART_DELAY, SENTINEL_STABLE_SECS, SENTINEL_HEARTBEAT_SECS, SENTINEL_WATCHDOG_SECS,
 plus the bus/router variables.
 """
+import hashlib
 import ipaddress
 import json
 import os
@@ -73,6 +74,16 @@ PROCESS_LIMIT = 32
 IP_LIMIT = 45            # the longest textual IPv6 address
 SUSPECT_SAMPLE = 40
 SUSPECT_SENSOR = "input.injection-suspect"
+METHOD_LIMIT = 16
+KNOWN_METHODS = frozenset(("GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "TRACE", "CONNECT",
+                           "PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK", "REPORT", "SEARCH"))
+# Suspect warnings are written by the attacker's own requests, and bus dedup happens only on the
+# reading side: without a limit, a scanner could fill the bus. At most one warning per suspect
+# fingerprint per 10 minutes and 30 per hour overall; the rest is counted and reported once an hour.
+# Primary events are never limited by this.
+SUSPECT_PER_FP_SECS = 600
+SUSPECT_MAX_PER_HOUR = 30
+SUSPECT_WINDOW_SECS = 3600
 
 
 def trusted_sudo_users():
@@ -126,6 +137,58 @@ def _ev(sensor, severity, what, fingerprint, evidence, command, message=None, co
     if message:
         ev["message"] = message
     return ev
+
+
+class SuspectLimiter:
+    """In-process rate limit for `input.injection-suspect` events, applied before they reach the bus.
+    filter(events) passes every other event unchanged; flush() returns the hourly summary of what was
+    suppressed (at most one per window). Thread-safe: the journal and web followers share one."""
+
+    def __init__(self, per_fp_secs=SUSPECT_PER_FP_SECS, max_per_hour=SUSPECT_MAX_PER_HOUR,
+                 window_secs=SUSPECT_WINDOW_SECS, clock=time.monotonic):
+        self.per_fp, self.max, self.window, self.clock = per_fp_secs, max_per_hour, window_secs, clock
+        self.lock = threading.Lock()
+        self.last = {}            # fingerprint -> time last let through
+        self.window_start = None
+        self.count = 0
+        self.suppressed = 0
+
+    def _roll(self, now):
+        """Close the window when it is over; returns the summary event list for it."""
+        out = []
+        if self.window_start is not None and now - self.window_start >= self.window:
+            if self.suppressed:
+                out.append(_ev(SUSPECT_SENSOR, "warning", "suspect events suppressed: %d" % self.suppressed,
+                               SUSPECT_SENSOR + ":suppressed",
+                               {"suppressed": self.suppressed, "window_seconds": int(self.window),
+                                "per_fingerprint_seconds": int(self.per_fp), "max_per_window": self.max},
+                               "grep input.injection-suspect <state>/events.jsonl | tail"))
+            self.window_start, self.count, self.suppressed = None, 0, 0
+            self.last = {fp: t for fp, t in self.last.items() if now - t < self.per_fp}
+        return out
+
+    def flush(self):
+        with self.lock:
+            return self._roll(self.clock())
+
+    def filter(self, events):
+        with self.lock:
+            now = self.clock()
+            out = self._roll(now)
+            for ev in events:
+                if ev.get("sensor") != SUSPECT_SENSOR:
+                    out.append(ev)
+                    continue
+                fp = ev.get("fingerprint")
+                if self.window_start is None:
+                    self.window_start = now
+                if (fp in self.last and now - self.last[fp] < self.per_fp) or self.count >= self.max:
+                    self.suppressed += 1
+                    continue
+                self.last[fp] = now
+                self.count += 1
+                out.append(ev)
+            return out
 
 
 def _suspects(sensor, field, raw, source, command):
@@ -215,7 +278,7 @@ def journal_events(entry, known_ips_path=None):
             unit = m.group(1) if m else "unknown-unit"
         return [_ev("systemd.unit-failed", "alert", "unit %s failed: %s" % (unit, msg[:200]),
                     "systemd.unit-failed:%s" % unit, {"unit": unit, "message": msg[:300]},
-                    "systemctl status %s" % shlex.quote(unit),
+                    "systemctl status --lines=0 --no-pager %s" % shlex.quote(unit),
                     message=t("stream.unit_failed", unit=unit))]
 
     if entry.get("_TRANSPORT") == "kernel":
@@ -249,13 +312,17 @@ def web_events(line):
     m = _WEB_RE.search(line)
     if not m:
         return []
-    status, nbytes, method, path = int(m.group(1)), int(m.group(2)), m.group(3), m.group(4)
+    status, nbytes, method_raw, path = int(m.group(1)), int(m.group(2)), m.group(3), m.group(4)
+    method = clean(method_raw, METHOD_LIMIT)
     prefix = line[:m.start()].split()
     # %v (the configured ServerName) and %a (the peer address) are not client text; cleaned anyway
     vhost = clean(prefix[1], 80) if len(prefix) >= 3 else "-"
     ip = clean(prefix[2], IP_LIMIT) if len(prefix) >= 3 else "-"
     path_raw = path.split("?", 1)[0]
     path_c = clean(path_raw, PATH_LIMIT)
+    # The display is cut at 80 characters; the fingerprint must still tell two different paths apart
+    # (two leaks sharing a prefix must not dedup into one), so it carries a digest of the full path.
+    digest = hashlib.sha256(path_raw.encode("utf-8", "surrogateescape")).hexdigest()[:12]
     # grep needs a literal prefix of the logged path, not the "..." of a shortened one
     grep_key = clean(path_raw, len(path_raw) + 1)[:PATH_LIMIT]
     if 200 <= status < 300:
@@ -268,14 +335,17 @@ def web_events(line):
     ev = _ev("web.sensitive-hit", sev,
              "%s %s -> %d (%d body bytes) on %s from %s" % (method, quote(path_raw, PATH_LIMIT), status, nbytes,
                                                             vhost, ip),
-             "web.sensitive-hit:%s:%s:%s" % (vhost, path_c, klass),
+             "web.sensitive-hit:%s:%s#%s:%s" % (vhost, path_c, digest, klass),
              {"vhost": vhost, "ip": ip, "status": status, "bytes": nbytes, "path": path_c},
              hint)
     if sev == "critical":
         ev["message"] = t("stream.web_leak", path=quote(path_raw, PATH_LIMIT), status=status, bytes=nbytes,
                           vhost=vhost)
     # the full request target, query included: an injection can live in the query string too
-    return [ev] + _suspects(ev["sensor"], "path", path, ip, hint)
+    extra = _suspects(ev["sensor"], "path", path, ip, hint)
+    if method_raw not in KNOWN_METHODS:   # an invented method is client text too
+        extra += _suspects(ev["sensor"], "method", method_raw, ip, hint)
+    return [ev] + extra
 
 
 def classify_web(line):
@@ -364,7 +434,7 @@ class Source(threading.Thread):
                        "stream source '%s' unreadable for over %d s" % (self.src_name, unreadable_secs),
                        "stream.source-unreadable:%s" % self.src_name,
                        {"source": self.src_name, "seconds": int(now - self.fail_since)},
-                       "systemctl status sentinel-stream; journalctl -u sentinel-stream --since -1h",
+                       "systemctl status --lines=0 --no-pager sentinel-stream",
                        message=t("stream.source_unreadable", source=self.src_name, seconds=int(unreadable_secs)),
                        confidence="unknown")
         return None
@@ -414,16 +484,18 @@ def main():
     known = known_ips_default()
     web_log = os.environ.get("SENTINEL_WEB_LOG") or WEB_LOG_DEFAULT
 
+    limiter = SuspectLimiter()
+
     def on_journal(line):
         try:
             entry = json.loads(line)
         except ValueError:
             return
-        for ev in journal_events(entry, known) if isinstance(entry, dict) else []:
+        for ev in limiter.filter(journal_events(entry, known) if isinstance(entry, dict) else []):
             emit_safe(ev)
 
     def on_web(line):
-        for ev in web_events(line):
+        for ev in limiter.filter(web_events(line)):
             emit_safe(ev)
 
     web_cmd_env = os.environ.get("SENTINEL_WEB_CMD")
@@ -451,6 +523,8 @@ def main():
             ev = s.check_health(unreadable)
             if ev:
                 emit_safe(ev)
+        for ev in limiter.flush():   # the hourly "suppressed" summary even when no new event arrives
+            emit_safe(ev)
         # Beat only while every thread lives: a crashed thread must stop the beat, so that
         # escalation (heartbeat) and systemd (watchdog restart) see it. Silence is a signal.
         if alive and now - last_hb >= hb_secs:
