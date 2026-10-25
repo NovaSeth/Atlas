@@ -331,7 +331,7 @@ gantt
 | What | When | Budget |
 |---|---|---|
 | `patrol.sh` | cron `7,37 * * * *` | each sensor has its own time limit (atlas check 100 s, HTTP probes 90 s ...); a full run takes about 30 s |
-| `escalation.sh` | `OnCalendar=*:0/10` | 120 s, 128 MB |
+| `escalation.sh` | `OnCalendar=*-*-* *:00/10:00 UTC` (UTC, so the autumn DST change cannot skip an hour) | 120 s, 128 MB |
 | `stream.py` | always; heartbeat 60 s, systemd watchdog 120 s | 80 MB, 10 % CPU |
 | snapshot retention | cron `40 4 * * *` | snapshots older than 30 days are deleted |
 

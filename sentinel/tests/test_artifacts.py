@@ -27,6 +27,17 @@ class UnitTests(unittest.TestCase):
                              set(), unit.name)
 
 
+class TimerTests(unittest.TestCase):
+    def test_escalation_timer_runs_on_utc(self):
+        # In local time the autumn DST change skips the repeated hour: the escalation was ~70 min blind.
+        text = (SENTINEL / "units" / "sentinel-escalation.timer").read_text()
+        cal = re.findall(r"(?m)^OnCalendar=(.*)$", text)
+        self.assertEqual(len(cal), 1, cal)
+        self.assertRegex(cal[0].strip(), r"\sUTC$")
+        self.assertIn("/10", cal[0])
+        self.assertRegex(text, r"(?m)^Persistent=true\s*$")
+
+
 class ApacheTests(unittest.TestCase):
     def setUp(self):
         self.text = CONF.read_text()
