@@ -52,6 +52,38 @@ class TestSessionSensorExcerpt(unittest.TestCase):
         self.assertTrue(printable_ascii(out.decode("ascii").rstrip("\n")))
 
 
+class TestSessionSensorKeepsLetters(unittest.TestCase):
+    def run_sensor(self, body_bytes):
+        d = Path(tempfile.mkdtemp(prefix="sensor-unicode-"))
+        self.addCleanup(shutil.rmtree, d, True)
+        (d / "ALERT").write_bytes(b"2026-10-22T10:00:00Z\n" + body_bytes)
+        env = dict(os.environ, SENTINEL_ATLAS=str(d), SENTINEL_ESCALATION_LOG=str(d / "esc.log"),
+                   SENTINEL_INTERVAL="0.2", SENTINEL_BUS_CMD="sleep 3600")
+        p = subprocess.Popen(["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env,
+                             stdout=subprocess.PIPE)
+        self.addCleanup(p.kill)
+        lines = []
+        threading.Thread(target=lambda: [lines.append(l) for l in p.stdout], daemon=True).start()
+        end = time.time() + 10
+        while time.time() < end and not lines:
+            time.sleep(0.1)
+        self.assertTrue(lines, "no output from the session sensor")
+        return lines[0].decode("utf-8")
+
+    def test_polish_letters_survive_hidden_characters_do_not(self):
+        polish = "\u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c \u0104\u0106\u0118\u0141\u0143\u00d3\u015a\u0179\u017b"
+        body = "ATLAS: logowanie z nieznanego adresu \x1b[31m%s\x1b[0m op\u200bs \u202eevil\n" % polish
+        out = self.run_sensor(body.encode("utf-8"))
+        self.assertIn(polish, out)
+        self.assertIn("ops", out)
+        for bad in ("\x1b", "[31m", "\u200b", "\u202e"):
+            self.assertNotIn(bad, out)
+
+    def test_cap_is_300_characters(self):
+        out = self.run_sensor(("\u017c" * 400 + "\n").encode("utf-8"))
+        self.assertEqual(out.count("\u017c"), 300)
+
+
 class TestSshLoginsSanitized(unittest.TestCase):
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="ssh-untrusted-"))
