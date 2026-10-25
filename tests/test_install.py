@@ -60,41 +60,57 @@ class InstallDryRun(unittest.TestCase):
         self.assertIn("SENTINEL_ATLAS=%s /opt/atlas/atlas/patrol.sh" % self.state, out)   # crontab printed
         self.assertNotIn("@ATLAS_", out)
 
+    def dry(self, code, state=None):
+        return subprocess.run(["bash", str(INSTALL), "--dry-run", "--code", str(code),
+                               "--state", str(state or self.state), "--user", "atlas-test-nobody"],
+                              capture_output=True, text=True, timeout=120)
+
     def planned_code_steps(self, code):
-        """The planned commands that replace the code: rm -rf <code>/<entry> ... then one cp -a."""
-        out = subprocess.run(["bash", str(INSTALL), "--dry-run", "--code", str(code), "--state", str(self.state),
-                              "--user", "atlas-test-nobody"], capture_output=True, text=True, timeout=120).stdout
-        steps = [shlex.split(l) for l in self.planned(out)
-                 if l.startswith("cp -a ") or l.startswith("rm -rf %s/" % code)]
-        self.assertEqual(len([s for s in steps if s[0] == "cp"]), 1, out)
+        """The planned commands of the code step: between '==> copying the code' and the next '==>'."""
+        r = self.dry(code)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        steps, inside = [], False
+        for l in r.stdout.splitlines():
+            if l.startswith("==> "):
+                inside = l.startswith("==> copying the code")
+            elif inside and l.startswith("[dry-run] "):
+                steps.append(shlex.split(l[len("[dry-run] "):]))
+        new, old = "%s/.atlas-install-new" % code, "%s/.atlas-install-old" % code
         for s in steps:
-            if s[0] == "rm":   # never anything outside the code dir, never the code dir itself
-                self.assertTrue(all(a.startswith("%s/" % code) and a != "%s/" % code for a in s[2:]), s)
+            if s[0] == "rm":      # only the installer's own staging dirs are ever deleted
+                self.assertTrue(all(x in (new, old) for x in s[2:]), s)
+            if s[0] == "mv":      # renames stay inside the code dir
+                self.assertTrue(all(x.startswith("%s/" % code) for x in s[1:]), s)
         return steps
 
     def planned_copy(self, code):
-        return [s for s in self.planned_code_steps(code) if s[0] == "cp"][0]
+        cps = [s for s in self.planned_code_steps(code) if s[0] == "cp"]
+        self.assertEqual(len(cps), 1)
+        return cps[0]
 
-    def test_reinstall_over_existing_code_updates_agent(self):
+    def test_reinstall_stages_then_swaps_and_updates_agent(self):
         code = self.tmp / "code"
         (code / "agent" / "claude-code").mkdir(parents=True)
         (code / "agent" / "claude-code" / "stale.md").write_text("old")
         (code / "atlas").mkdir()
         (code / "AGENTS.md").write_text("old instructions\n")
+        (code / "local-notes.txt").write_text("operator file, not product\n")
         steps = self.planned_code_steps(code)
-        argv = steps[-1]
-        self.assertEqual(argv[0], "cp")
-        self.assertIn("%s/agent" % ROOT, argv)
-        self.assertEqual(argv[-1], "%s/" % code)
-        # run exactly the planned code steps against the temp code dir (no root needed)
-        for s in steps:
+        cp = [s for s in steps if s[0] == "cp"][0]
+        self.assertEqual(cp[-1], "%s/.atlas-install-new/" % code)     # staged next to the target
+        self.assertIn("%s/agent" % ROOT, cp)
+        self.assertTrue(any(s[0] == "mv" and s[-1] == "%s/agent" % code for s in steps))
+        self.assertFalse(any(s[0] == "rm" and "%s/agent" % code in s for s in steps))
+        for s in steps:     # run exactly the planned steps against the temp code dir (no root needed)
             r = subprocess.run(s, capture_output=True, text=True, timeout=60)
-            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.returncode, 0, (s, r.stderr))
         self.assertEqual((code / "AGENTS.md").read_text(), (ROOT / "AGENTS.md").read_text())
         plugin = code / "agent" / "claude-code" / ".claude-plugin" / "plugin.json"
         self.assertEqual(plugin.read_text(), (ROOT / "agent" / "claude-code" / ".claude-plugin" / "plugin.json").read_text())
         self.assertFalse((code / "agent" / "claude-code" / "stale.md").exists(),
                          "a file removed from the product must not survive a re-install")
+        self.assertTrue((code / "local-notes.txt").exists(), "a non-product file in the code dir was deleted")
+        self.assertFalse((code / ".atlas-install-new").exists() or (code / ".atlas-install-old").exists())
 
     def test_every_product_entry_is_copied(self):
         tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True).stdout.split()
@@ -102,6 +118,37 @@ class InstallDryRun(unittest.TestCase):
         not_product = {".github", ".gitignore", "tests", "pytest.ini"}   # CI and the test suite stay in the repo
         copied = {Path(a).name for a in self.planned_copy(self.tmp / "code")[2:-1]}
         self.assertEqual(top - not_product, copied, "a top-level entry is neither copied nor declared not-product")
+
+    def assert_refused(self, code, state, word):
+        r = self.dry(code, state)
+        self.assertNotEqual(r.returncode, 0, r.stdout)
+        self.assertIn(word, r.stderr)
+        self.assertNotIn("[dry-run]", r.stdout, "refused only after planning actions")
+
+    def test_state_inside_a_replaced_directory_is_refused(self):
+        code = self.tmp / "code"
+        for state in (code / "atlas", code / "atlas" / "sub", code / "docs", code / "agent" / "x"):
+            with self.subTest(state=state):
+                self.assert_refused(code, state, "state")
+
+    def test_code_inside_or_equal_to_state_is_refused(self):
+        state = self.tmp / "st"
+        for code in (state, state / "code"):
+            with self.subTest(code=code):
+                self.assert_refused(code, state, "state")
+
+    def test_state_reached_through_a_symlink_is_resolved(self):
+        code = self.tmp / "code"
+        (code / "atlas").mkdir(parents=True)
+        link = self.tmp / "state-link"
+        link.symlink_to(code / "atlas")
+        self.assert_refused(code, link, "state")
+
+    def test_state_next_to_the_code_is_fine(self):
+        r = self.dry(self.tmp / "code", self.tmp / "state")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = self.dry(self.tmp / "code", self.tmp / "code-state")   # a shared name prefix is not "inside"
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_existing_config_is_never_overwritten(self):
         self.state.mkdir()

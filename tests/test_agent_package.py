@@ -81,5 +81,24 @@ class ProcedureTests(unittest.TestCase):
         self.assertLessEqual(len(AGENTS_MD.read_text().splitlines()), 160)
 
 
+class NoRawJournalInAgentDocsTests(unittest.TestCase):
+    """`systemctl status` prints recent journal lines (raw, untrusted log text) into the agent's context."""
+
+    DOCS = [AGENTS_MD, SKILL_MD, ROOT / "docs" / "resident.md", ROOT / "README.md"]
+
+    def test_no_bare_systemctl_status(self):
+        for p in self.DOCS:
+            for line in p.read_text().splitlines():
+                for m in re.finditer(r"systemctl status([^`\n]*)", line):
+                    with self.subTest(doc=p.name, line=line):
+                        self.assertRegex(m.group(1), r"--lines=0|-n ?0\b")
+
+    def test_procedure_recommends_systemctl_show(self):
+        for p in (AGENTS_MD, SKILL_MD):
+            body = procedure(p)
+            self.assertIn("systemctl show -p ActiveState,SubState,Result,ExecMainStatus,ActiveEnterTimestamp", body)
+            self.assertIn("is-failed", body)
+
+
 if __name__ == "__main__":
     unittest.main()
