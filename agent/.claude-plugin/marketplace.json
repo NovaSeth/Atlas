@@ -1,0 +1,12 @@
+{
+  "name": "atlas",
+  "owner": {"name": "Atlas maintainers"},
+  "description": "The Atlas resident plugin: alert procedure and quarantined log reader for an AI agent on a host watched by Atlas.",
+  "plugins": [
+    {
+      "name": "atlas-resident",
+      "source": "./claude-code",
+      "description": "Alert procedure and a quarantined log-reader subagent for an AI resident on a host watched by Atlas."
+    }
+  ]
+}
