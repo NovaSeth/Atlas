@@ -26,8 +26,11 @@ from datetime import datetime, timedelta, timezone
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(BASE))
+# untrusted.clean lives with the bus code in <repo>/sentinel
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(BASE)), "sentinel"))
 import envfile  # noqa: E402
 from i18n import t  # noqa: E402
+from untrusted import clean  # noqa: E402
 
 envfile.load(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE))
 KNOWN = os.environ.get("SSH_KNOWN_IPS", os.path.join(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE), "known-ips.txt"))
@@ -83,7 +86,9 @@ def main():
         return 2
     now = datetime.now(timezone.utc)
     ev = events(p.stdout, known, now)
-    for (ip, user), (when, method) in sorted(ev.items()):
+    for (ip_raw, user_raw), (when, method) in sorted(ev.items()):
+        # the user name is whatever the client asked to log in as: untrusted text in ALERT
+        ip, user, when, method = clean(ip_raw, 80), clean(user_raw, 32), clean(when, 40), clean(method, 32)
         if text_mode:
             print(t("ssh.login_line", ip=ip, user=user, method=method, when=when))
         else:

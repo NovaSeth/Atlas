@@ -40,6 +40,7 @@ envfile.load(os.environ.get("SENTINEL_ATLAS") or Path(__file__).resolve().parent
 import bus  # noqa: E402
 import router  # noqa: E402
 from i18n import t  # noqa: E402
+from untrusted import clean, quote, suspicious  # noqa: E402
 
 # 60 s heartbeat: escalation treats > 5 min of silence as a problem, so 5 beats may be missed.
 DEFAULT_HEARTBEAT_SECS = 60
@@ -61,6 +62,17 @@ JOURNAL_CMD = ("journalctl -f -o json -n 0 --output-fields=" + JOURNAL_FIELDS +
                " _SYSTEMD_UNIT=ssh.service + SYSLOG_IDENTIFIER=sudo + _PID=1 + _TRANSPORT=kernel")
 WEB_LOG_DEFAULT = "/var/log/apache2/sentinel-sensitive.log"
 
+# Untrusted text (request paths, user names, command lines, process names) enters `what` and
+# `message` through untrusted.quote(), evidence and fingerprints through untrusted.clean():
+# printable ASCII, bounded, shown as data. Limits per field:
+PATH_LIMIT = 80
+USER_LIMIT = 32
+COMMAND_WHAT_LIMIT = 120
+COMMAND_EVIDENCE_LIMIT = 500
+PROCESS_LIMIT = 32
+IP_LIMIT = 45            # the longest textual IPv6 address
+SUSPECT_SAMPLE = 40
+SUSPECT_SENSOR = "input.injection-suspect"
 
 
 def trusted_sudo_users():
@@ -116,6 +128,20 @@ def _ev(sensor, severity, what, fingerprint, evidence, command, message=None, co
     return ev
 
 
+def _suspects(sensor, field, raw, source, command):
+    """At most one `warning` event when `raw` looks like instructions (untrusted.suspicious). It
+    never wakes the session (the session sensor passes alert and above) and never blocks the
+    original event: a signal for whoever reads the bus, not a verdict."""
+    rules = suspicious(raw)
+    if not rules:
+        return []
+    return [_ev(SUSPECT_SENSOR, "warning",
+                "instruction-like text in %s from %s: %s" % (field, source, ",".join(rules)),
+                "%s:%s:%s:%s" % (SUSPECT_SENSOR, sensor, field, rules[0]),
+                {"field": field, "source": source, "rules": rules, "sample": clean(raw, SUSPECT_SAMPLE)},
+                command)]
+
+
 _SSH_RE = re.compile(r"^Accepted (\S+) for (\S+) from (\S+)")
 # sudo >= 1.9 pads the user name with leading spaces ("  ops : PWD=..."); a denied command puts the
 # reason first ("ops : command not allowed ; PWD=..."), a successful one starts with KEY=value fields.
@@ -125,13 +151,14 @@ _FAILED_RE = re.compile(r"^(\S+?): Failed with result")
 _OOM_RE = re.compile(r"Out of memory: Killed process (\d+) \((.*?)\)")
 
 
-def classify_journal(entry, known_ips_path=None):
-    """Map one journald JSON entry to a bus event or None. Trusted fields (_SYSTEMD_UNIT, _PID,
-    _TRANSPORT are set by journald, not by the sender) are required, so a user cannot forge an
-    alert by logging a lookalike line."""
+def journal_events(entry, known_ips_path=None):
+    """Map one journald JSON entry to a list of bus events: [] (nothing), [event], or [event plus
+    `input.injection-suspect` warnings]. Trusted fields (_SYSTEMD_UNIT, _PID, _TRANSPORT are set by
+    journald, not by the sender) are required, so a user cannot forge an alert by logging a
+    lookalike line."""
     msg = entry.get("MESSAGE")
     if not isinstance(msg, str):
-        return None
+        return []
     ident = entry.get("SYSLOG_IDENTIFIER")
 
     if entry.get("_SYSTEMD_UNIT") == "ssh.service" and msg.startswith("Accepted "):
@@ -139,90 +166,122 @@ def classify_journal(entry, known_ips_path=None):
         # contains "Accepted" too and is not a login (the trap that fooled the first draft).
         m = _SSH_RE.match(msg)
         if not m:
-            return None
-        method, user, ip = m.groups()
-        known = _norm_ip(ip) in load_known_ips(known_ips_path or known_ips_default())
+            return []
+        method, user_raw, ip_raw = m.groups()
+        user, ip, method = clean(user_raw, USER_LIMIT), clean(ip_raw, IP_LIMIT), clean(method, 32)
+        known = _norm_ip(ip_raw) in load_known_ips(known_ips_path or known_ips_default())
         fp = "auth.ssh.accepted-login:%s@%s" % (user, ip.replace(":", "_"))
+        cmd = "journalctl -u ssh --since -1h | grep 'Accepted '"
         ev = _ev("auth.ssh.accepted-login", "info" if known else "critical",
-                 "SSH login by %s from %s IP %s (%s)" % (user, "known" if known else "UNKNOWN", ip, method),
-                 fp, {"user": user, "ip": ip, "method": method, "known_ip": known},
-                 "journalctl -u ssh --since -1h | grep 'Accepted '")
+                 "SSH login by %s from %s IP %s (%s)" % (quote(user_raw, USER_LIMIT),
+                                                         "known" if known else "UNKNOWN", ip, method),
+                 fp, {"user": user, "ip": ip, "method": method, "known_ip": known}, cmd)
         if not known:
-            ev["message"] = t("stream.ssh_unknown", user=user, ip=ip)
-        return ev
+            ev["message"] = t("stream.ssh_unknown", user=quote(user_raw, USER_LIMIT), ip=ip)
+        return [ev] + _suspects(ev["sensor"], "user", user_raw, ip, cmd)
 
     if ident == "sudo" and "COMMAND=" in msg:
         m = _SUDO_RE.match(msg)
         if not m:
-            return None
-        user, fields, cmd = m.group(1), m.group(2), m.group(3).strip()
+            return []
+        user_raw, fields, cmd_raw = m.group(1), m.group(2), m.group(3).strip()
         first = fields.split(";", 1)[0].strip()
-        reason = first if first and not _SUDO_FIELD.match(first) else ""
-        exe = os.path.basename(cmd.split()[0]) if cmd.split() else "-"
+        reason = clean(first, 80) if first and not _SUDO_FIELD.match(first) else ""
+        exe = clean(os.path.basename(cmd_raw.split()[0]) if cmd_raw.split() else "-", 64)
+        user = clean(user_raw, USER_LIMIT)
         me = self_user()
-        if not reason and user == me and me != "root":
+        if not reason and user_raw == me and me != "root":
             # the Atlas user running its allowlisted read-only commands (~300 per patrol): not news
-            return None
-        trusted = user in trusted_sudo_users() and not reason
-        what = "sudo by %s%s: %s" % (user, " (%s)" % reason[:80] if reason else "", cmd[:200])
-        evidence = {"user": user, "command": cmd[:500]}
+            return []
+        trusted = user_raw in trusted_sudo_users() and not reason
+        what = "sudo by %s%s: %s" % (quote(user_raw, USER_LIMIT), " (%s)" % reason if reason else "",
+                                     quote(cmd_raw, COMMAND_WHAT_LIMIT))
+        evidence = {"user": user, "command": clean(cmd_raw, COMMAND_EVIDENCE_LIMIT)}
         if reason:
-            evidence["reason"] = reason[:120]
+            evidence["reason"] = reason
+        hint = "journalctl -t sudo --since -1h"
         ev = _ev("auth.sudo.command", "info" if trusted else "alert",
-                 what, "auth.sudo.command:%s:%s" % (user, exe),
-                 evidence, "journalctl -t sudo --since -1h")
+                 what, "auth.sudo.command:%s:%s" % (user, exe), evidence, hint)
         if not trusted:
-            ev["message"] = t("stream.sudo", user=user, command=cmd[:120])
-        return ev
+            ev["message"] = t("stream.sudo", user=quote(user_raw, USER_LIMIT),
+                              command=quote(cmd_raw, COMMAND_WHAT_LIMIT))
+        return [ev] + _suspects(ev["sensor"], "command", cmd_raw, user, hint)
 
     if entry.get("_PID") == "1" and "Failed with result" in msg:
+        # PID 1 and unit names come from the system manager (root-defined units), not from a user
         unit = entry.get("UNIT")
         if not isinstance(unit, str):
             m = _FAILED_RE.match(msg)
             unit = m.group(1) if m else "unknown-unit"
-        return _ev("systemd.unit-failed", "alert", "unit %s failed: %s" % (unit, msg[:200]),
-                   "systemd.unit-failed:%s" % unit, {"unit": unit, "message": msg[:300]},
-                   "systemctl status %s" % shlex.quote(unit),
-                   message=t("stream.unit_failed", unit=unit))
+        return [_ev("systemd.unit-failed", "alert", "unit %s failed: %s" % (unit, msg[:200]),
+                    "systemd.unit-failed:%s" % unit, {"unit": unit, "message": msg[:300]},
+                    "systemctl status %s" % shlex.quote(unit),
+                    message=t("stream.unit_failed", unit=unit))]
 
     if entry.get("_TRANSPORT") == "kernel":
         m = _OOM_RE.search(msg)
         if m:
-            pid, name = m.groups()
-            return _ev("kernel.oom-kill", "alert", "OOM killer killed %s (pid %s)" % (name, pid),
-                       "kernel.oom-kill:%s" % name, {"process": name, "pid": pid},
-                       "journalctl -k --since -1h | grep 'Out of memory'",
-                       message=t("stream.oom", name=name))
-    return None
+            # the process name (comm) is chosen by whoever started the process: untrusted
+            pid, name_raw = m.groups()
+            name = clean(name_raw, PROCESS_LIMIT)
+            hint = "journalctl -k --since -1h | grep 'Out of memory'"
+            ev = _ev("kernel.oom-kill", "alert",
+                     "OOM killer killed %s (pid %s)" % (quote(name_raw, PROCESS_LIMIT), pid),
+                     "kernel.oom-kill:%s" % name, {"process": name, "pid": pid}, hint,
+                     message=t("stream.oom", name=quote(name_raw, PROCESS_LIMIT)))
+            return [ev] + _suspects(ev["sensor"], "process", name_raw, "kernel", hint)
+    return []
+
+
+def classify_journal(entry, known_ips_path=None):
+    """The primary event for one journald entry, or None (journal_events without the suspects)."""
+    evs = journal_events(entry, known_ips_path)
+    return evs[0] if evs else None
 
 
 # status, bytes, then the request: works with or without the leading "ts vhost ip" fields.
 _WEB_RE = re.compile(r'(?:^|\s)(\d{3}) (\d+) "([A-Z]+) (\S+)[^"]*"\s*$')
 
 
-def classify_web(line):
+def web_events(line):
+    """One sensitive-path log line -> [] or [web.sensitive-hit, plus suspect warnings]. The request
+    path is the attacker's text: quoted in `what`/`message`, cleaned in evidence/fingerprint."""
     m = _WEB_RE.search(line)
     if not m:
-        return None
+        return []
     status, nbytes, method, path = int(m.group(1)), int(m.group(2)), m.group(3), m.group(4)
     prefix = line[:m.start()].split()
-    vhost = prefix[1] if len(prefix) >= 3 else "-"
-    ip = prefix[2] if len(prefix) >= 3 else "-"
-    path_only = path.split("?", 1)[0][:120]
+    # %v (the configured ServerName) and %a (the peer address) are not client text; cleaned anyway
+    vhost = clean(prefix[1], 80) if len(prefix) >= 3 else "-"
+    ip = clean(prefix[2], IP_LIMIT) if len(prefix) >= 3 else "-"
+    path_raw = path.split("?", 1)[0]
+    path_c = clean(path_raw, PATH_LIMIT)
+    # grep needs a literal prefix of the logged path, not the "..." of a shortened one
+    grep_key = clean(path_raw, len(path_raw) + 1)[:PATH_LIMIT]
     if 200 <= status < 300:
         # %B counts the body only. An empty 2xx is a placeholder page, a non-empty one is a leak.
         sev = "critical" if nbytes > 0 else "warning"
         klass = "2xx"
     else:
         sev, klass = "info", "other"
+    hint = "grep -F %s %s" % (shlex.quote(grep_key), WEB_LOG_DEFAULT)
     ev = _ev("web.sensitive-hit", sev,
-             "%s %s -> %d (%d body bytes) on %s from %s" % (method, path_only, status, nbytes, vhost, ip),
-             "web.sensitive-hit:%s:%s:%s" % (vhost, path_only, klass),
-             {"vhost": vhost, "ip": ip, "status": status, "bytes": nbytes, "path": path_only},
-             "grep -F %s %s" % (shlex.quote(path_only), WEB_LOG_DEFAULT))
+             "%s %s -> %d (%d body bytes) on %s from %s" % (method, quote(path_raw, PATH_LIMIT), status, nbytes,
+                                                            vhost, ip),
+             "web.sensitive-hit:%s:%s:%s" % (vhost, path_c, klass),
+             {"vhost": vhost, "ip": ip, "status": status, "bytes": nbytes, "path": path_c},
+             hint)
     if sev == "critical":
-        ev["message"] = t("stream.web_leak", path=path_only, status=status, bytes=nbytes, vhost=vhost)
-    return ev
+        ev["message"] = t("stream.web_leak", path=quote(path_raw, PATH_LIMIT), status=status, bytes=nbytes,
+                          vhost=vhost)
+    # the full request target, query included: an injection can live in the query string too
+    return [ev] + _suspects(ev["sensor"], "path", path, ip, hint)
+
+
+def classify_web(line):
+    """The primary event for one log line, or None (web_events without the suspects)."""
+    evs = web_events(line)
+    return evs[0] if evs else None
 
 
 class Source(threading.Thread):
@@ -360,13 +419,11 @@ def main():
             entry = json.loads(line)
         except ValueError:
             return
-        ev = classify_journal(entry, known) if isinstance(entry, dict) else None
-        if ev:
+        for ev in journal_events(entry, known) if isinstance(entry, dict) else []:
             emit_safe(ev)
 
     def on_web(line):
-        ev = classify_web(line)
-        if ev:
+        for ev in web_events(line):
             emit_safe(ev)
 
     web_cmd_env = os.environ.get("SENTINEL_WEB_CMD")

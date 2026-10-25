@@ -32,8 +32,11 @@ import urllib.request
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(BASE))
+# untrusted.clean lives with the bus code in <repo>/sentinel
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(BASE)), "sentinel"))
 import envfile  # noqa: E402
 from i18n import t  # noqa: E402
+from untrusted import clean  # noqa: E402
 
 envfile.load(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE))
 SITES = os.environ.get("HTTP_SITES_DIR") or "/etc/apache2/sites-enabled"
@@ -46,6 +49,9 @@ TIMEOUT = 10
 # Reserved TLDs (RFC 2606 / 6761) never resolve on the public internet, e.g. the catch-all default
 # vhost `default.invalid`; probing them would report UNKNOWN on every patrol.
 RESERVED_TLDS = (".invalid", ".test", ".example", ".localhost")
+# Extra URLs come from a CMS (post slugs are written by editors or commenters): untrusted text in
+# ALERT, cleaned to printable ASCII. Host names are cleaned to 80 characters, URLs to this:
+URL_LIMIT = 120
 SERVER_NAME = re.compile(r"^\s*ServerName\s+(\S+)", re.I | re.M)
 
 
@@ -132,23 +138,23 @@ def main():
         try:
             code = fetch(url)
         except FetchError as e:
-            unknown.append("%s: %s" % (name, e))
+            unknown.append("%s: %s" % (clean(name, 80), clean(e, 200)))
             continue
         if name not in expected:
-            events.append(t("http.unknown_expectation", host=name, code=code))
+            events.append(t("http.unknown_expectation", host=clean(name, 80), code=code))
         elif code not in expected[name]:
-            events.append(t("http.mismatch", host=name, code=code, expected=expected[name]))
+            events.append(t("http.mismatch", host=clean(name, 80), code=code, expected=expected[name]))
     try:
         for url in extra_urls(extra_cmd):
             try:
                 code = fetch(url)
             except FetchError as e:
-                unknown.append("%s: %s" % (url, e))
+                unknown.append("%s: %s" % (clean(url, URL_LIMIT), clean(e, 200)))
                 continue
             if code != 200:
-                events.append(t("http.extra_not_200", url=url, code=code))
+                events.append(t("http.extra_not_200", url=clean(url, URL_LIMIT), code=code))
     except (FetchError, subprocess.TimeoutExpired) as e:
-        unknown.append("extra: %s" % e)
+        unknown.append("extra: %s" % clean(e, 200))
     if unknown:
         print("; ".join(unknown + events), file=sys.stderr)  # keep real mismatches visible too
         return 2
