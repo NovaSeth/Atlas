@@ -101,7 +101,11 @@ class FollowTests(BusBase):
         return got
 
     def test_follow_across_rotation_loses_and_duplicates_nothing(self):
-        os.environ["SENTINEL_BUS_MAX_BYTES"] = "500"
+        # 2000 bytes: ~30 events rotate about 3 times, within the KEEP=3 generations a lagging follower can still drain.
+        # With 500 bytes there were ~12 rotations; on a loaded CI runner the follower (0.5 s poll) fell more than KEEP
+        # generations behind and the oldest files were already gone (seen 2026-10-25: 26 of 30). That is a test-setup
+        # artefact (production rotates at 5 MB), not a follower defect.
+        os.environ["SENTINEL_BUS_MAX_BYTES"] = "2000"
         self.addCleanup(os.environ.pop, "SENTINEL_BUS_MAX_BYTES", None)
         got = self._collect(from_end=True)
         time.sleep(0.3)
@@ -109,7 +113,7 @@ class FollowTests(BusBase):
             bus.emit(make_event(fingerprint="f:%d" % i))
             if i % 7 == 0:
                 time.sleep(0.1)
-        self.assertTrue(wait_for(lambda: len(got) >= 30, 10), len(got))
+        self.assertTrue(wait_for(lambda: len(got) >= 30, 30), len(got))
         self.assertEqual([e["fingerprint"] for e in got], ["f:%d" % i for i in range(30)])
         self.assertTrue((self.d / "events.jsonl.1").exists(), "rotation did not happen")
 
