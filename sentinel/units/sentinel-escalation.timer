@@ -3,7 +3,8 @@ Description=Sentinel escalation every 10 minutes
 
 [Timer]
 # OnCalendar, not OnUnitActiveSec: the latter never fires if the unit did not run once in this boot.
-OnCalendar=*:0/10
+# UTC: in local time the autumn DST change skips the repeated hour (seen live: ~70 min without escalation).
+OnCalendar=*-*-* *:00/10:00 UTC
 AccuracySec=30s
 Persistent=true
 

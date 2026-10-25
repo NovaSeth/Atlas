@@ -295,7 +295,7 @@ class TestUnits(unittest.TestCase):
         self.assertIn("WorkingDirectory=@ATLAS_CODE@\n", (self.U / "sentinel-stream.service").read_text())
         esc = (self.U / "sentinel-escalation.service").read_text()
         self.assertIn("ExecStart=@ATLAS_CODE@/sentinel/escalation.sh", esc)
-        self.assertIn("OnCalendar=*:0/10", (self.U / "sentinel-escalation.timer").read_text())
+        self.assertIn("OnCalendar=*-*-* *:00/10:00 UTC", (self.U / "sentinel-escalation.timer").read_text())
 
     def test_env_example_documents_every_variable(self):
         text = (ROOT / "examples" / "sentinel.env").read_text()
