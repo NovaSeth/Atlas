@@ -131,6 +131,14 @@ class InstallDryRun(unittest.TestCase):
             with self.subTest(state=state):
                 self.assert_refused(code, state, "state")
 
+    def test_state_anywhere_inside_the_code_dir_is_refused(self):
+        # Re-review 2026-10-25: a state dir named like the installer's staging dirs passed the per-entry check and
+        # would be deleted by the staging cleanup. State inside the code dir is never valid.
+        code = self.tmp / "code"
+        for state in (code / ".atlas-install-old", code / ".atlas-install-new", code / "state", code / "x" / "y"):
+            with self.subTest(state=state):
+                self.assert_refused(code, state, "state")
+
     def test_code_inside_or_equal_to_state_is_refused(self):
         state = self.tmp / "st"
         for code in (state, state / "code"):
