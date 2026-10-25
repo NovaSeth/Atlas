@@ -87,6 +87,153 @@ Full reference: [docs/configuration.md](docs/configuration.md).
 
 ---
 
+## Project map
+
+What the repository contains, what the installer turns it into, what runs each part, what each part reads and
+writes, and who is told in the end. Solid arrows are "runs" or "writes", dotted arrows are "reads".
+
+```mermaid
+flowchart LR
+    subgraph REPO["Repository"]
+        direction TB
+        INST["install.sh / uninstall.sh"]
+        CODEA["atlas/<br/>atlas.py · patrol.sh · jobs.sh<br/>sensors/ssh_logins.py · sensors/http_probes.py"]
+        CODES["sentinel/<br/>stream.py · router.py · bus.py<br/>escalation.sh · session-sensor.sh"]
+        LIB["shared helpers<br/>atlas/lib.sh · envfile.py · i18n.py<br/>i18n/en.json · i18n/pl.json"]
+        TPL["templates and examples<br/>sentinel/units/* · sentinel/apache/*<br/>examples/*"]
+    end
+
+    subgraph HOST["Installed on the host"]
+        direction TB
+        CRON["crontab of the atlas user<br/>patrol at :07 and :37"]
+        TIMER["sentinel-escalation.timer<br/>every 10 min (UTC)"]
+        UNIT["sentinel-stream.service<br/>always on, watchdog"]
+        SUDO["/etc/sudoers.d/atlas<br/>read-only commands"]
+        APSN["Apache snippet<br/>sensitive-path log"]
+        ENV["sentinel.env<br/>one config file"]
+    end
+
+    subgraph RUN["Running processes"]
+        direction TB
+        PATROL["patrol.sh"]
+        ATLASPY["atlas.py check / thresholds / silent"]
+        JOBS["jobs.sh + jobs.d/*.sh"]
+        SENS["ssh_logins.py · http_probes.py"]
+        BRIDGES["bridges.d/*"]
+        STREAM["stream.py"]
+        ROUTER["router.py"]
+        ESC["escalation.sh"]
+        SSENS["session-sensor.sh + bus.py follow"]
+    end
+
+    subgraph INPUT["What is read"]
+        direction TB
+        SYS["system state<br/>services, ports, accounts, keys,<br/>sudoers, vhosts, crontabs, certs,<br/>setuid files, ufw, packages"]
+        JLOGS["job logs"]
+        JOURNAL["systemd journal"]
+        WEBLOG["Apache sensitive-path log"]
+        SITES["your public sites"]
+    end
+
+    subgraph STATE["State directory (SENTINEL_ATLAS)"]
+        direction TB
+        BASE[("baseline.json<br/>current.json · snapshots/")]
+        ALERT[("ALERT · ALERT.since<br/>ALERT.acked")]
+        LOGS[("heartbeat.log · drift.log<br/>REPORT-TO-SEND")]
+        BUS[("events.jsonl<br/>event bus")]
+        CONF[("known-ips.txt · http-expected.json<br/>pauses/ · jobs.d/ · bridges.d/")]
+    end
+
+    subgraph OUT["Who is told"]
+        direction TB
+        HUMAN["the human<br/>mail and/or SENTINEL_NOTIFY_CMD"]
+        RES["optional AI resident<br/>woken in seconds"]
+    end
+
+    INST --> CRON
+    INST --> TIMER
+    INST --> UNIT
+    INST --> SUDO
+    INST --> APSN
+    INST --> ENV
+    TPL -. rendered by .-> INST
+    LIB -. used by every entrypoint .-> RUN
+    ENV -. loaded by every entrypoint .-> RUN
+    CODEA -. installed as .-> PATROL
+    CODES -. installed as .-> STREAM
+
+    CRON --> PATROL
+    PATROL --> ATLASPY
+    PATROL --> JOBS
+    PATROL --> SENS
+    PATROL --> BRIDGES
+    TIMER --> ESC
+    UNIT --> STREAM
+    STREAM --> ROUTER
+
+    SYS -. via sudo rules .-> ATLASPY
+    SUDO -. allows .-> ATLASPY
+    JLOGS -.-> JOBS
+    JOURNAL -.-> STREAM
+    JOURNAL -.-> SENS
+    APSN --> WEBLOG
+    WEBLOG -.-> STREAM
+    SITES -.-> SENS
+    CONF -.-> JOBS
+    CONF -.-> SENS
+    CONF -.-> STREAM
+    BASE -. compared with .-> ATLASPY
+
+    PATROL --> ALERT
+    PATROL --> LOGS
+    PATROL --> BUS
+    ATLASPY --> BASE
+    STREAM --> BUS
+    STREAM --> LOGS
+
+    BUS -.-> SSENS
+    ALERT -.-> SSENS
+    ALERT -.-> ESC
+    LOGS -. heartbeats .-> ESC
+    SSENS --> RES
+    ROUTER -- "critical, resident absent" --> HUMAN
+    ESC -- "silence or unanswered alarm" --> HUMAN
+    RES -- "bless, fix, ack" --> BASE
+    RES -- "ack" --> ALERT
+```
+
+### Files, one line each
+
+```text
+install.sh                     installer: prerequisites, state dir, units, sudoers, Apache snippet, crontab, first snapshot (--dry-run)
+uninstall.sh                   removes units, snippet and sudoers; keeps the state dir unless --purge
+atlas/
+  atlas.py                     snapshot of the machine's identity; check (drift vs baseline), bless, show, thresholds, silent failures
+  patrol.sh                    one patrol run: every periodic sensor under a time limit -> ALERT, drift.log, heartbeat.log, bus events
+  jobs.sh                      runner for job contracts: helpers check / check_last_line / paused, sources STATE/jobs.d/*.sh
+  sensors/ssh_logins.py        SSH logins of the last 24 h from IPs outside known-ips.txt
+  sensors/http_probes.py       every vhost answers its expected code; optional extra URLs must answer 200
+  lib.sh                       bash helpers: load sentinel.env (environment wins), message catalog lookup
+  envfile.py                   the same env loading for Python entrypoints (parsed, never executed)
+  i18n.py                      message catalog lookup for Python and for bash (via lib.sh)
+  pauses/README.md             how a deliberate silence (pauses/<id>) works
+sentinel/
+  bus.py                       append-only JSONL event bus: emit (validated), follow (tail -F, per-fingerprint dedup), rotation
+  stream.py                    daemon: follows the journal and the Apache sensitive-path log, turns lines into events, heartbeat
+  router.py                    for critical events: notifies the human when no AI resident is present (once per fingerprint per 6 h)
+  escalation.sh                LLM-free path to the human: silent patrol, silent stream, dead resident, unacknowledged alarm
+  session-sensor.sh            prints one line per state change for an AI agent's monitor tool (no polling inside the agent)
+  units/*.service, *.timer     systemd templates (@ATLAS_CODE@, @ATLAS_STATE@, @ATLAS_USER@), rendered by install.sh
+  units/crontab.example        the two cron lines (patrol, snapshot retention)
+  apache/sentinel-sensitive.conf   logs requests for .env, .git, wp-config, dumps ... to a separate log for stream.py
+i18n/en.json, i18n/pl.json     every human-facing message; SENTINEL_LANG picks the language
+examples/                      sentinel.env, http-expected.json, known-ips.txt, jobs.d/, bridges.d/, sudoers.d/atlas
+docs/                          architecture, configuration, security, resident (connecting an AI agent)
+.github/workflows/tests.yml    CI: tests, shell syntax and an installer dry run on every push
+```
+
+---
+
 ## The system at a glance
 
 ```mermaid
