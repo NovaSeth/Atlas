@@ -104,8 +104,9 @@ router sends critical events to the human and escalation reports `resident-dead`
 The full procedure is in `AGENTS.md` (and in the plugin's skill). In short:
 
 1. Read Atlas data first: `ALERT`, the bus line that woke it, `atlas.py show`.
-2. Verify by probing system state (`systemctl`, `ss`, `sha256sum`, `crontab -l`, `getent passwd`), not by reading
-   raw logs.
+2. Verify by probing system state (`systemctl show -p ActiveState,SubState,Result <unit>`, `systemctl is-failed`,
+   `ss`, `sha256sum`, `crontab -l`, `getent passwd`), not by reading raw logs. The default `status` view prints
+   journal lines: use `systemctl status --lines=0 --no-pager <unit>` if you need it.
 3. Raw logs only through the `log-reader` subagent, on an exported slice.
 4. Decide: an explained change is blessed (`atlas.py bless`) and acknowledged (`touch <state>/ALERT.acked`); a real
    fault inside its mandate is fixed and verified; anything unexplained is reported as a possible intrusion and
