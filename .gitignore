@@ -40,3 +40,5 @@ atlas/.ALERT.*
 .pytest_cache/
 __pycache__/
 *.pyc
+atlas/events.jsonl
+atlas/events.lock

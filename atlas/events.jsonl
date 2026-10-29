@@ -1,1 +1,0 @@
-{"sensor":"atlas.bless","severity":"warning","confidence":"measured","what":"baseline accepted by debian","fingerprint":"atlas.bless:igpcjpnknnoj","evidence":{"who":"debian","sections":["new","old"],"first":false,"sha256":"86f29fdadde9ac211bad05e6dec9b8b5847b133477fb2484b386a4aaf8d5a0bf"},"ts":"2026-10-29T22:04:51Z"}
