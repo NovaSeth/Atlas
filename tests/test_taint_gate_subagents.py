@@ -113,3 +113,32 @@ def test_known_format_without_evidence_is_not_called_unknown(tainted):
     tp.write_text(json.dumps({"type": "assistant", "sessionId": SID, "message": {"content": []}}) + "\n")
     tainted.prompt("ok", prompt_id="p-known", transcript_path=str(tp))
     assert "transcript-format-unknown" not in tainted.log_text()
+
+
+def _load_hook():
+    import importlib.util
+    from test_taint_gate import HOOK
+    spec = importlib.util.spec_from_file_location("taint_gate_inproc", HOOK)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_failed_agent_taint_write_still_gates_the_subagent(gate, monkeypatch, capsys):
+    """Review F1: when agent_taint cannot be persisted, a conservative per-agent flag gates the subagent."""
+    for k, v in gate.env().items():
+        if k.startswith("TAINT_"):
+            monkeypatch.setenv(k, v)
+    mod = _load_hook()
+    real_write = mod.State._write
+
+    def write(self, d):
+        return False if "agent_taint" in d else real_write(self, d)
+
+    monkeypatch.setattr(mod.State, "_write", write)
+    base = {"session_id": SID, "cwd": "/home/tester/project", **SUB}
+    mod.subagent_pre_tool_use(dict(base), "Read", {"file_path": "/var/log/auth.log"}, base["cwd"])
+    capsys.readouterr()
+    mod.subagent_pre_tool_use(dict(base), "Bash", {"command": "sudo id"}, base["cwd"])
+    out = capsys.readouterr().out
+    assert '"permissionDecision": "deny"' in out and "this subagent read untrusted data" in out
