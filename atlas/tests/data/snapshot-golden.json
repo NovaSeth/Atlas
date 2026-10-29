@@ -1,0 +1,151 @@
+{
+ "accounts": {
+  "ops": {
+   "keys": [],
+   "shell": "/bin/bash",
+   "uid": 1000
+  },
+  "root": {
+   "keys": [
+    "SHA256:abc root@box"
+   ],
+   "shell": "/bin/bash",
+   "uid": 0
+  }
+ },
+ "apt_sources": {
+  "/APT/sources.list": "sha:sources.list",
+  "/APT/sources.list.d/x.list": "sha:x.list"
+ },
+ "certs": {
+  "ok.example": {
+   "days": 60,
+   "expiry": "2027-01-01 00:00:00+00:00"
+  }
+ },
+ "containers": {
+  "web": {
+   "image": "nginx:1",
+   "ports": "0.0.0.0:8080->80/tcp"
+  }
+ },
+ "crontabs": {
+  "cron.d/job": {
+   "sha": "sha:job"
+  },
+  "root": {
+   "lines": 1,
+   "sha": "2e16c12f096b434d"
+  }
+ },
+ "firewall": [],
+ "host": {
+  "ip": "192.0.2.10",
+  "kernel": "6.12.0",
+  "os": "Debian GNU/Linux 13 (trixie)"
+ },
+ "listeners": [
+  "tcp 0.0.0.0:22 sshd",
+  "udp 127.0.0.53:53 systemd-resolve"
+ ],
+ "packages": [
+  "bash=5.2",
+  "zlib1g=1.3"
+ ],
+ "sensitive_files": {
+  "/etc/apt/apt.conf.d/": [
+   "one",
+   "two"
+  ],
+  "/etc/bash.bashrc": "0123456789abcdef",
+  "/etc/cron.daily/": [
+   "one",
+   "two"
+  ],
+  "/etc/cron.hourly/": [
+   "one",
+   "two"
+  ],
+  "/etc/environment": "0123456789abcdef",
+  "/etc/hosts": "0123456789abcdef",
+  "/etc/ld.so.preload": "__absent (good)__",
+  "/etc/nsswitch.conf": "0123456789abcdef",
+  "/etc/pam.d/sshd": "0123456789abcdef",
+  "/etc/profile": "0123456789abcdef",
+  "/etc/profile.d/": [
+   "one",
+   "two"
+  ],
+  "/etc/rc.local": "__absent (good)__",
+  "/etc/resolv.conf": "0123456789abcdef",
+  "/etc/ssh/sshd_config": "0123456789abcdef",
+  "/etc/ssh/sshd_config.d/": [],
+  "/etc/sudoers.d/": [
+   "one",
+   "two"
+  ],
+  "/etc/systemd/system/a.service": "0123456789abcdef",
+  "/etc/systemd/system/b.timer": "0123456789abcdef",
+  "__ssh_host_keys__": [
+   "SHA256:hostkey5519_key",
+   "SHA256:hostkey_rsa_key"
+  ]
+ },
+ "services": {
+  "enabled": [
+   "ssh.service"
+  ],
+  "running": [
+   "ssh.service"
+  ]
+ },
+ "setuid": [
+  "/usr/bin/passwd",
+  "/usr/bin/sudo"
+ ],
+ "sudoers": {
+  "/etc/sudoers": "0123456789abcdef",
+  "/etc/sudoers.d/README": "0123456789abcdef",
+  "/etc/sudoers.d/ops": "0123456789abcdef"
+ },
+ "timers": [
+  "apt-daily.timer",
+  "certbot.timer"
+ ],
+ "vhosts": {
+  "a.conf": {
+   "names": [
+    "a.example"
+   ],
+   "proxy": [],
+   "root": [
+    "/srv/a"
+   ],
+   "sha": "sha:a.conf"
+  },
+  "conf-enabled/alias.conf": {
+   "alias": [
+    "/acme"
+   ],
+   "sha": "0123456789abcdef"
+  }
+ },
+ "vitals": {
+  "banned_sshd": "3",
+  "certs_error": "",
+  "disk_avail": "18G",
+  "disk_used_pct": "53%",
+  "failed_units": "1",
+  "load": "0.10 0.20 0.30",
+  "measure_errors": {},
+  "mem_available_mb": "2700",
+  "not_present": [
+   "ufw"
+  ],
+  "silent_failures": {
+   "certbot.service": "last run ENDED WITH AN ERROR (2026-10-28T03:00:00+0000); failures in 7 days: 2"
+  },
+  "silent_unknown": {},
+  "uptime": "up 3 days, 2 hours"
+ }
+}
