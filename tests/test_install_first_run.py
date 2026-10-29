@@ -72,12 +72,33 @@ class FirstRun(unittest.TestCase):
         self.assertRegex(out, r"\[dry-run\] sudo.*2001:db8::7.*known-ips\.txt")
 
     def test_invalid_ssh_address_is_refused(self):
-        for bad in ("192.0.2.999", "evil;rm", "$(id)", "192.0.2", "::g1"):
+        for bad in (
+            "192.0.2.999",
+            "evil;rm",
+            "$(id)",
+            "192.0.2",
+            "::g1",
+            ":::",
+            "1:2:3",
+            "12345::1",
+            "fe80::1%eth0",
+            "garbage",
+            "",
+        ):
             r = self.run_install("--yes", ssh="%s 1 203.0.113.2 22" % bad)
             self.assertNotRegex(
                 r.stdout, r"\[dry-run\] (?!install -m).*known-ips\.txt|\[dry-run\] .*%s" % re.escape(bad), bad
             )
             self.assertIn("not a valid IP address", r.stderr, bad)
+
+    def test_valid_addresses_are_written_normalized(self):
+        for given, written in (
+            ("192.0.2.5", "192.0.2.5"),
+            ("2001:DB8:0:0::7", "2001:db8::7"),
+            ("::ffff:192.0.2.1", "::ffff:192.0.2.1"),
+        ):
+            out = self.run_install("--yes", ssh="%s 1 203.0.113.2 22" % given).stdout
+            self.assertRegex(out, r"\[dry-run\] sudo.* %s /\S*known-ips\.txt" % re.escape(written), given)
 
     def test_without_ssh_it_prints_how_to_add(self):
         out = self.run_install("--yes").stdout
