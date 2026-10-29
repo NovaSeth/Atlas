@@ -59,6 +59,11 @@ QUIET_BETWEEN_MAILS=6    # hours, per kind - so that a failure does not turn int
 
 now=$(date +%s)
 
+# Every Atlas mail goes through one path (multipart text + HTML): notify.py mail <kind> <subject>, body on stdin.
+send_mail() {   # $1=kind  $2=subject  $3=body
+    printf '%s\n' "$3" | SENTINEL_EMAIL="$HUMAN" timeout 70 python3 "$SDIR/notify.py" mail "$1" "$2"
+}
+
 # An unsafe runtime directory: no marker or log may be written there. One mail per 6 h (marker in the
 # state dir of Atlas itself), a stderr line, exit 2 (UNKNOWN), never ok.
 UNSAFE_REASON=$(state_dir_problem "$STATE")
@@ -69,7 +74,7 @@ if [ -n "$UNSAFE_REASON" ]; then
         u_subject=$(t esc.unsafe_state_subject)
         u_body=$(t esc.unsafe_state dir="$STATE" reason="$UNSAFE_REASON" hours=6)
         u_sent=0
-        if [ -n "$HUMAN" ] && printf '%s\n' "$u_body" | mail -s "$u_subject" "$HUMAN"; then u_sent=1; fi
+        if [ -n "$HUMAN" ] && send_mail unsafe-state "$u_subject" "$u_body"; then u_sent=1; fi
         if [ -n "$NOTIFY_CMD" ]; then
             read -r -a u_cmd <<< "$NOTIFY_CMD"
             SENTINEL_EMAIL="$HUMAN" timeout 45 "${u_cmd[@]}" "$u_subject" "$u_body" >/dev/null 2>&1 && u_sent=1
@@ -90,7 +95,7 @@ shout() {   # $1=kind  $2=subject  $3=body
         return 0
     fi
     if [ -n "$HUMAN" ]; then
-        printf '%s\n' "$3" | mail -s "$2" "$HUMAN" && sent=1 && heartbeat "MAIL SENT: $1"
+        send_mail "$1" "$2" "$3" && sent=1 && heartbeat "MAIL SENT: $1"
     fi
     # The optional extra channel supplements mail, it never replaces it:
     #  - `timeout` and no `set -e`: a failing extra channel must NEVER bring escalation down;
@@ -186,7 +191,7 @@ if [ -f "$ATLAS/ALERT" ]; then
             ack_subject=$(t esc.ack_unrecorded_subject)
             ack_body=$(t esc.ack_unrecorded sha256="$alert_sha" sections="${ack_sections:--}")
             ack_sent=0
-            if [ -n "$HUMAN" ] && printf '%s\n' "$ack_body" | mail -s "$ack_subject" "$HUMAN"; then ack_sent=1; fi
+            if [ -n "$HUMAN" ] && send_mail ack-unrecorded "$ack_subject" "$ack_body"; then ack_sent=1; fi
             if [ -n "$NOTIFY_CMD" ]; then
                 read -r -a ack_cmd <<< "$NOTIFY_CMD"
                 SENTINEL_EMAIL="$HUMAN" timeout 45 "${ack_cmd[@]}" "$ack_subject" "$ack_body" >/dev/null 2>&1 && ack_sent=1

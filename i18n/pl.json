@@ -92,5 +92,15 @@
   "router.wake_limit_body": "Ponad {limit} zdarzeń alarmowych obudziłoby agenta w ciągu godziny (pierwsze pominięte: {sensor}). Agent dostanie jedną linię podsumowania po upływie godziny; zajrzyj do szyny (events.jsonl) sam.",
   "digest.subject": "[sentinel] dzienne podsumowanie: {count} działań agenta",
   "digest.header": "Sudo agenta, akceptacje wzorca, potwierdzenia i odrzucone fałszywe wpisy sudo od {since} do {until} (UTC):",
-  "digest.more": "(… i {count} więcej)"
+  "digest.more": "(… i {count} więcej)",
+
+  "mail.sev_critical": "KRYTYCZNY",
+  "mail.sev_alert": "ALARM",
+  "mail.sev_warning": "OSTRZEŻENIE",
+  "mail.sev_info": "INFO",
+  "mail.next_title": "Co dalej",
+  "mail.next_show": "Zobacz aktualny stan: atlas.py show",
+  "mail.next_ack": "Gdy sprawa załatwiona: atlas.py ack (a atlas.py bless, by przyjąć nowy wzorzec)",
+  "mail.next_nollm": "Ta ścieżka alarmowa działa bez AI: nic tu nie zależy od tego, czy agent żyje.",
+  "mail.footer": "Atlas — ścieżka alarmowa bez LLM"
 }

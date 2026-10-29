@@ -5,9 +5,12 @@ Stdlib only, no LLM. The stream runs without privileges for a setuid MTA, so a n
 written to <runtime>/outbox/ and delivered by the next escalation run (`notify.py drain`).
 
     notify.py drain      deliver queued notices; prints "outbox: sent=N failed=M dropped=K" only when non-zero
+    notify.py mail <kind> <subject>   mail the body from stdin to $SENTINEL_EMAIL (same look as every Atlas mail);
+                                      exit 0 sent, 1 failed, 2 usage
 
-Channels (same as the router): SENTINEL_NOTIFY_CMD called as <cmd> "<subject>" "<body>", otherwise
-`mail -s <subject> $SENTINEL_EMAIL` (SENTINEL_MAIL_CMD overrides `mail`).
+Channels (same as the router): SENTINEL_NOTIFY_CMD called as <cmd> "<subject>" "<body>", otherwise a multipart
+text + HTML mail to $SENTINEL_EMAIL through sendmail (mailfmt.py). SENTINEL_MAIL_CMD, when set, forces the old
+plain `<cmd> -s <subject> <to>` path.
 """
 
 import fcntl
@@ -23,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bus  # noqa: E402
+import mailfmt  # noqa: E402
 
 OUTBOX_MAX = 200
 OUTBOX_MAX_AGE_S = 7 * 86400
@@ -56,6 +60,23 @@ def outbox_dir():
     return bus.runtime_dir() / "outbox"
 
 
+_kind_hint = "alert"  # the kind of the notice being sent (severity of the mail); set by send_or_queue and drain
+
+
+def _send_mail(subject, body, to, timeout, env, kind):
+    """The mail channel: multipart text + HTML via sendmail; SENTINEL_MAIL_CMD forces the old plain path."""
+    if os.environ.get("SENTINEL_MAIL_CMD"):
+        mail = shlex.split(os.environ["SENTINEL_MAIL_CMD"])
+        r = subprocess.run(
+            mail + ["-s", subject, to], input=body + "\n", capture_output=True, text=True, timeout=timeout, env=env
+        )
+        return r.returncode == 0
+    ok, err = mailfmt.send_mail(mailfmt.build(subject, body, kind, os.environ.get("SENTINEL_LANG") or None), timeout)
+    if not ok:
+        print("sentinel-notify: mail not sent (%s)" % err, file=sys.stderr, flush=True)
+    return ok
+
+
 def send(subject, body, timeout=NOTIFY_TIMEOUT):
     """Send one notification; True when a channel accepted it. `timeout` bounds one attempt (seconds)."""
     env = dict(os.environ)
@@ -74,11 +95,7 @@ def send(subject, body, timeout=NOTIFY_TIMEOUT):
                 flush=True,
             )
             return False
-        mail = shlex.split(os.environ.get("SENTINEL_MAIL_CMD") or "mail")
-        r = subprocess.run(
-            mail + ["-s", subject, to], input=body + "\n", capture_output=True, text=True, timeout=timeout, env=env
-        )
-        return r.returncode == 0
+        return _send_mail(subject, body, to, timeout, env, _kind_hint)
     except (OSError, ValueError, subprocess.SubprocessError):  # ValueError: unparsable command (shlex)
         return False
 
@@ -143,6 +160,8 @@ def _queue(subject, body, kind):
 
 def send_or_queue(subject, body, kind):
     """'sent' when a channel accepted the notice, 'queued' when it waits in the outbox, 'lost' when neither."""
+    global _kind_hint
+    _kind_hint = kind
     if send(subject, body):
         return "sent"
     try:
@@ -172,6 +191,11 @@ def _lock_wait(lock, end):
             time.sleep(0.1)
 
 
+def _set_kind(kind):
+    global _kind_hint
+    _kind_hint = kind
+
+
 def _deliver(files, result, end):
     """Send the queued entries oldest first, updating `result`; stops at the first failed send or at `end`."""
     for i, f in enumerate(files):
@@ -190,6 +214,7 @@ def _deliver(files, result, end):
                 result["failed"] += 1
             continue
         left = end - time.monotonic()
+        _set_kind(str(e.get("kind", "alert")))
         if left <= 0 or not send(str(e.get("subject", "")), str(e.get("body", "")), timeout=min(NOTIFY_TIMEOUT, left)):
             result["failed"] += len(files) - i
             break
@@ -234,8 +259,18 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv == ["ping"]:
         return 0 if ping() else 1
+    if argv[:1] == ["mail"] and len(argv) == 3:
+        to = os.environ.get("SENTINEL_EMAIL", "").strip()
+        if not to:
+            print("sentinel-notify: no recipient (SENTINEL_EMAIL empty)", file=sys.stderr, flush=True)
+            return 1
+        try:
+            body = sys.stdin.read().rstrip("\n")
+            return 0 if _send_mail(argv[2], body, to, NOTIFY_TIMEOUT, dict(os.environ), argv[1]) else 1
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return 1
     if argv[:1] != ["drain"]:
-        print("usage: notify.py drain|ping", file=sys.stderr)
+        print("usage: notify.py drain|ping|mail <kind> <subject>", file=sys.stderr)
         return 2
     r, error = _drain(60.0)
     if error:

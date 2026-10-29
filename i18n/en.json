@@ -92,5 +92,15 @@
   "router.wake_limit_body": "More than {limit} alert events would have woken the agent within one hour (first suppressed: {sensor}). The agent gets one summary line when the hour ends; look at the bus (events.jsonl) yourself.",
   "digest.subject": "[sentinel] daily digest: {count} agent action(s)",
   "digest.header": "Agent sudo, baseline acceptances, acknowledgements and rejected forged sudo lines from {since} to {until} (UTC):",
-  "digest.more": "(… and {count} more)"
+  "digest.more": "(… and {count} more)",
+
+  "mail.sev_critical": "CRITICAL",
+  "mail.sev_alert": "ALERT",
+  "mail.sev_warning": "WARNING",
+  "mail.sev_info": "INFO",
+  "mail.next_title": "What now",
+  "mail.next_show": "Look at the current state: atlas.py show",
+  "mail.next_ack": "When you have dealt with it: atlas.py ack (and atlas.py bless to accept a new baseline)",
+  "mail.next_nollm": "This alert path works without the AI: nothing here depends on the agent being alive.",
+  "mail.footer": "Atlas — LLM-free alert path"
 }
