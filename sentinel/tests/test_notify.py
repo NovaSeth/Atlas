@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import subprocess
+import time
 import unittest
 from unittest import mock
 
@@ -98,3 +99,76 @@ class EscalationDrain(unittest.TestCase):
         self.assertIn("queued subject", mails.read_text())
         self.assertEqual(list((atlas / "runtime" / "outbox").glob("*.json")), [])
         self.assertIn("outbox: sent=1", (atlas / "runtime" / "escalation.log").read_text())
+
+
+class DrainBudget(unittest.TestCase):
+    """Review r1 F2: drain stays inside its time budget, also when each send is slow."""
+
+    def setUp(self):
+        self.d = tmpdir(self)
+        p = mock.patch.dict(os.environ, {"SENTINEL_ATLAS": str(self.d), "SENTINEL_NOTIFY_CMD": "",
+                                         "SENTINEL_EMAIL": ""})
+        p.start()
+        self.addCleanup(p.stop)
+        os.environ.pop("SENTINEL_STATE_DIR", None)
+
+    def test_slow_channel_cannot_exceed_the_budget(self):
+        notify.send_or_queue("s1", "b", "router")
+        notify.send_or_queue("s2", "b", "router")
+        slow = self.d / "slow-stub"
+        slow.write_text("#!/bin/sh\nexec sleep 20\n")
+        slow.chmod(0o755)
+        t0 = time.monotonic()
+        with mock.patch.dict(os.environ, {"SENTINEL_NOTIFY_CMD": str(slow)}):
+            r = notify.drain(max_seconds=2)
+        self.assertLess(time.monotonic() - t0, 6)
+        self.assertEqual((r["sent"], r["failed"]), (0, 2))
+        self.assertEqual(len(list((self.d / "runtime" / "outbox").glob("*.json"))), 2)
+
+    def test_each_send_gets_the_remaining_budget(self):
+        notify.send_or_queue("s1", "b", "router")
+        seen = []
+
+        def fake(subject, body, timeout=notify.NOTIFY_TIMEOUT):
+            seen.append(timeout)
+            return True
+        with mock.patch.object(notify, "send", fake):
+            notify.drain(max_seconds=5)
+        self.assertEqual(len(seen), 1)
+        self.assertLessEqual(seen[0], 5)
+
+
+class DrainDiagnostics(unittest.TestCase):
+    """Review r1 F1: an unusable outbox is visible in the CLI result and in the escalation log."""
+
+    def test_cli_reports_an_unusable_outbox(self):
+        d = tmpdir(self)
+        rt = d / "runtime"
+        (rt / "outbox").mkdir(parents=True, mode=0o750)
+        (rt / "outbox").chmod(0o777)
+        env = dict(os.environ, SENTINEL_ATLAS=str(d))
+        env.pop("SENTINEL_STATE_DIR", None)
+        r = subprocess.run(["python3", str(SENTINEL / "notify.py"), "drain"], env=env, capture_output=True,
+                           text=True, timeout=30)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("outbox: unusable", r.stdout)
+
+    def test_escalation_logs_a_failed_drain(self):
+        d = tmpdir(self)
+        atlas, binp = d / "atlas", d / "bin"
+        (atlas / "runtime" / "outbox").mkdir(parents=True, mode=0o750)
+        (atlas / "runtime" / "outbox").chmod(0o777)
+        binp.mkdir()
+        for n in ("mail", "screen", "systemctl"):
+            (binp / n).write_text("#!/bin/bash\ncat >/dev/null\nexit 0\n")
+            (binp / n).chmod(0o755)
+        (atlas / "heartbeat.log").write_text("x ok\n")
+        env = dict(os.environ, SENTINEL_ATLAS=str(atlas), SENTINEL_EMAIL="nobody@example.com",
+                   SENTINEL_NOTIFY_CMD="", SENTINEL_LANG="en", SENTINEL_RESIDENT_UNIT="",
+                   SENTINEL_RESIDENT_SCREEN="", PATH="%s:%s" % (binp, os.environ["PATH"]))
+        for k in ("SENTINEL_STATE", "SENTINEL_STATE_DIR", "SENTINEL_STREAM_HEARTBEAT"):
+            env.pop(k, None)
+        subprocess.run(["bash", str(ESC)], env=env, capture_output=True, text=True, timeout=90)
+        log = (atlas / "runtime" / "escalation.log").read_text()
+        self.assertIn("outbox drain failed", log)
+        self.assertIn("unusable", log)
