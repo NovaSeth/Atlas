@@ -31,14 +31,14 @@ def outbox_dir():
     return bus.runtime_dir() / "outbox"
 
 
-def send(subject, body):
-    """Send one notification; True when a channel accepted it."""
+def send(subject, body, timeout=NOTIFY_TIMEOUT):
+    """Send one notification; True when a channel accepted it. `timeout` bounds one attempt (seconds)."""
     env = dict(os.environ)
     cmd = os.environ.get("SENTINEL_NOTIFY_CMD", "").strip()
     try:
         if cmd:
             r = subprocess.run(shlex.split(cmd) + [subject, body], capture_output=True, text=True,
-                               timeout=NOTIFY_TIMEOUT, env=env)
+                               timeout=timeout, env=env)
             return r.returncode == 0
         to = os.environ.get("SENTINEL_EMAIL", "").strip()
         if not to:
@@ -47,7 +47,7 @@ def send(subject, body):
             return False
         mail = shlex.split(os.environ.get("SENTINEL_MAIL_CMD") or "mail")
         r = subprocess.run(mail + ["-s", subject, to], input=body + "\n", capture_output=True, text=True,
-                           timeout=NOTIFY_TIMEOUT, env=env)
+                           timeout=timeout, env=env)
         return r.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
@@ -124,21 +124,36 @@ def send_or_queue(subject, body, kind):
 
 def drain(max_seconds=60.0):
     """Deliver queued notices, oldest first; a delivered one is removed. Stops at the first failure
-    (the channel is down; the rest stays queued and counts as failed) or when the time is up."""
+    (the channel is down; the rest stays queued and counts as failed) or when the time is up. The whole
+    call, lock wait and every send included, stays inside `max_seconds`."""
+    return _drain(max_seconds)[0]
+
+
+def _drain(max_seconds):
+    """(counts, error): `error` is a short text when the outbox could not be used at all, else ''."""
     result = {"sent": 0, "failed": 0, "dropped": 0}
+    end = time.monotonic() + max_seconds
     box = outbox_dir()
     try:
         bus.ensure_private_dir(bus.runtime_dir())
         if not box.is_dir():
-            return result
+            return result, ""
         bus.ensure_private_dir(box)
         lock = os.open(str(box / ".lock"), os.O_CREAT | os.O_RDWR, 0o640)
     except (OSError, bus.UnsafeStateDir) as e:
         print("sentinel-notify: outbox unusable: %s" % e, file=sys.stderr, flush=True)
-        return result
-    end = time.monotonic() + max_seconds
+        return result, str(e)
+    error = ""
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        while True:  # bounded lock wait: a stuck holder must not eat the whole budget
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= end:
+                    print("sentinel-notify: outbox lock busy", file=sys.stderr, flush=True)
+                    return result, "lock busy"
+                time.sleep(0.1)
         files = _entries(box)
         for i, f in enumerate(files):
             try:
@@ -155,7 +170,9 @@ def drain(max_seconds=60.0):
                 except OSError:
                     result["failed"] += 1
                 continue
-            if time.monotonic() >= end or not send(str(e.get("subject", "")), str(e.get("body", ""))):
+            left = end - time.monotonic()
+            if left <= 0 or not send(str(e.get("subject", "")), str(e.get("body", "")),
+                                     timeout=min(NOTIFY_TIMEOUT, left)):
                 result["failed"] += len(files) - i
                 break
             try:
@@ -171,7 +188,7 @@ def drain(max_seconds=60.0):
             pass
     finally:
         os.close(lock)
-    return result
+    return result, error
 
 
 def main(argv=None):
@@ -179,7 +196,10 @@ def main(argv=None):
     if argv[:1] != ["drain"]:
         print("usage: notify.py drain", file=sys.stderr)
         return 2
-    r = drain()
+    r, error = _drain(60.0)
+    if error:
+        print("outbox: unusable (%s)" % error)
+        return 1
     if r["sent"] or r["failed"] or r["dropped"]:
         print("outbox: sent=%d failed=%d dropped=%d" % (r["sent"], r["failed"], r["dropped"]))
     return 0

@@ -196,8 +196,14 @@ fi
 # Escalation runs without NoNewPrivileges, so a setuid MTA works here. The line goes to the log BEFORE the
 # result line (the recipient test reads the last one).
 DRAIN_OUT=$(SENTINEL_ATLAS="$ATLAS" SENTINEL_STATE_DIR="${SENTINEL_STATE_DIR:-$STATE}" SENTINEL_EMAIL="$HUMAN" \
-    SENTINEL_NOTIFY_CMD="$NOTIFY_CMD" timeout 70 python3 "$SDIR/notify.py" drain 2>/dev/null)
-[ -n "$DRAIN_OUT" ] && heartbeat "$DRAIN_OUT"
+    SENTINEL_NOTIFY_CMD="$NOTIFY_CMD" timeout 70 python3 "$SDIR/notify.py" drain 2>&1)
+DRAIN_RC=$?
+# A failed drain (unusable outbox, timeout, crash) is logged with its diagnostics, never swallowed.
+if [ "$DRAIN_RC" -ne 0 ]; then
+    heartbeat "outbox drain failed (rc=$DRAIN_RC): $(printf '%s' "$DRAIN_OUT" | tr '\n' ' ' | cut -c1-300)"
+elif [ -n "$DRAIN_OUT" ]; then
+    heartbeat "$DRAIN_OUT"
+fi
 
 # --- Result ---
 # A throttle marker lives only while ITS kind is a problem: a marker for a healthy kind is removed,
