@@ -36,3 +36,5 @@ atlas/.ALERT.*
 **/*.token
 **/*.key
 **/*.pem
+.ruff_cache/
+.pytest_cache/
