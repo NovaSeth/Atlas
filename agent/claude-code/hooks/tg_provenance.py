@@ -42,7 +42,11 @@ def _lines_reversed(real):
 
 
 def _origin_kind(d):
-    o = d.get("origin")
+    if "origin" not in d:
+        return None  # no key at all: how a real human message looks
+    o = d["origin"]
+    if o is None:
+        return "invalid"  # an explicit null is never human
     if isinstance(o, dict):
         k = o.get("kind")
         return k if isinstance(k, str) else "invalid"  # an origin without a string kind is never human
