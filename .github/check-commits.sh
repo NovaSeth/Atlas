@@ -12,7 +12,7 @@ if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
 else
   commits=$(git log --no-merges --format='%h %s' "$base..$head" --)
 fi
-pattern='^(feat|fix|test|docs|refactor|perf|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+'
+pattern='^(feat|fix|test|docs|style|refactor|perf|build|ci|chore|revert)(\([a-z0-9._/-]+\))?!?: .+'
 status=0
 while IFS= read -r commit; do
   [[ -z "$commit" ]] && continue
