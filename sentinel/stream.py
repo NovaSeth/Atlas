@@ -56,6 +56,10 @@ DEFAULT_RESTART_DELAY = 5.0
 # A source that stayed up this long counts as healthy again.
 DEFAULT_STABLE_SECS = 10.0
 TICK = 1.0
+# How long a terminated source process gets to exit before it is killed.
+STOP_WAIT_S = 5
+# Hex digits of the path digest in the web fingerprint.
+PATH_DIGEST_LEN = 12
 
 # Only these journal fields are requested: smaller JSON, less parsing on 1 vCPU.
 JOURNAL_FIELDS = "MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_PID,UNIT,_TRANSPORT,_UID,_EXE,_COMM"
@@ -77,10 +81,16 @@ SUSPECT_SAMPLE = 40
 SUSPECT_SENSOR = "input.injection-suspect"
 FORGED_SENSOR = "auth.sudo.forged"
 LIMITED_SENSORS = frozenset({SUSPECT_SENSOR, FORGED_SENSOR})
-UID_LIMIT = 12
+FORGED_UID_LIMIT = 12
 ATLAS_MEASURE_EXES = frozenset({"ss", "sha256sum", "ls", "test", "find", "certbot", "ufw",
                                 "fail2ban-client", "docker", "journalctl", "cat", "ssh-keygen", "crontab"})
 METHOD_LIMIT = 16
+SSH_METHOD_LIMIT = 32
+SUDO_REASON_LIMIT = 80
+SUDO_EXE_LIMIT = 64
+VHOST_LIMIT = 80
+UNIT_WHAT_LIMIT = 200
+UNIT_EVIDENCE_LIMIT = 300
 KNOWN_METHODS = frozenset(("GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "TRACE", "CONNECT",
                            "PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK", "REPORT", "SEARCH"))
 # Suspect and forged sudo warnings can be attacker-driven, and bus dedup happens only on the
@@ -259,99 +269,128 @@ _FAILED_RE = re.compile(r"^(\S+?): Failed with result")
 _OOM_RE = re.compile(r"Out of memory: Killed process (\d+) \((.*?)\)")
 
 
+def _ssh_event(entry, msg, known_ips_path=None):
+    """The accepted-login event(s), or None when `entry` is not an ssh.service "Accepted " line."""
+    if not (entry.get("_SYSTEMD_UNIT") == "ssh.service" and msg.startswith("Accepted ")):
+        return None
+    # "Accepted " with the capital A and the space: the log line "...PubkeyAcceptedAlgorithms..."
+    # contains "Accepted" too and is not a login (the trap that fooled the first draft).
+    m = _SSH_RE.match(msg)
+    if not m:
+        return []
+    method, user_raw, ip_raw = m.groups()
+    user, ip, method = clean(user_raw, USER_LIMIT), clean(ip_raw, IP_LIMIT), clean(method, SSH_METHOD_LIMIT)
+    known = _norm_ip(ip_raw) in load_known_ips(known_ips_path or known_ips_default())
+    fp = "auth.ssh.accepted-login:%s@%s" % (user, ip.replace(":", "_"))
+    cmd = "journalctl -u ssh --since -1h | grep 'Accepted '"
+    ev = _ev("auth.ssh.accepted-login", "info" if known else "critical",
+             "SSH login by %s from %s IP %s (%s)" % (quote(user_raw, USER_LIMIT),
+                                                     "known" if known else "UNKNOWN", ip, method),
+             fp, {"user": user, "ip": ip, "method": method, "known_ip": known}, cmd)
+    if not known:
+        ev["message"] = t("stream.ssh_unknown", user=quote(user_raw, USER_LIMIT), ip=ip)
+    return [ev] + _suspects(ev["sensor"], "user", user_raw, ip, cmd)
+
+
+def _forged_sudo_event(entry, sender):
+    uid = clean(entry.get("_UID", ""), FORGED_UID_LIMIT)
+    return [_ev(FORGED_SENSOR, "warning",
+                "forged sudo log line rejected (sender uid %s: %s)" % (uid, sender),
+                "auth.sudo.forged:uid%s:%s" % (uid, sender),
+                {"uid": uid, "reason": sender}, "journalctl -t sudo --since -1h")]
+
+
+def _is_atlas_measuring(user_raw, reason, exe, fields):
+    """The Atlas user running its allowlisted read-only commands (~300 per patrol): not news."""
+    me = self_user()
+    cwd = next((f.strip()[4:] for f in fields.split(";") if f.strip().startswith("PWD=")), None)
+    return bool(not reason and user_raw == me and me != "root" and exe in ATLAS_MEASURE_EXES
+                and cwd is not None and os.path.realpath(cwd) == os.path.realpath(bus.atlas_dir()))
+
+
+def _sudo_event(entry, msg):
+    """The sudo command event(s), or None when `entry` is not a sudo COMMAND= line."""
+    if not (entry.get("SYSLOG_IDENTIFIER") == "sudo" and "COMMAND=" in msg):
+        return None
+    m = _SUDO_RE.match(msg)
+    if not m:
+        return []
+    user_raw, fields, cmd_raw = m.group(1), m.group(2), m.group(3).strip()
+    sender = sudo_sender(entry, user_raw)
+    if sender not in {"ok", "ok-exe-missing"}:
+        return _forged_sudo_event(entry, sender)
+    first = fields.split(";", 1)[0].strip()
+    reason = clean(first, SUDO_REASON_LIMIT) if first and not _SUDO_FIELD.match(first) else ""
+    exe = clean(os.path.basename(cmd_raw.split()[0]) if cmd_raw.split() else "-", SUDO_EXE_LIMIT)
+    user = clean(user_raw, USER_LIMIT)
+    if _is_atlas_measuring(user_raw, reason, exe, fields):
+        return []
+    agent = user_raw in agent_sudo_users() and not reason
+    trusted = (agent or user_raw in trusted_sudo_users()) and not reason
+    what = "sudo by %s%s: %s" % (quote(user_raw, USER_LIMIT), " (%s)" % reason if reason else "",
+                                 quote(cmd_raw, COMMAND_WHAT_LIMIT))
+    evidence = {"user": user, "command": clean(cmd_raw, COMMAND_EVIDENCE_LIMIT)}
+    if sender == "ok-exe-missing":
+        evidence["exe"] = "missing"
+    if agent:
+        evidence["digest"] = True
+    if reason:
+        evidence["reason"] = reason
+    hint = "journalctl -t sudo --since -1h"
+    ev = _ev("auth.sudo.command", "info" if trusted else "alert",
+             what, "auth.sudo.command:%s:%s" % (user, exe), evidence, hint)
+    if not trusted:
+        ev["message"] = t("stream.sudo", user=quote(user_raw, USER_LIMIT),
+                          command=quote(cmd_raw, COMMAND_WHAT_LIMIT))
+    return [ev] + _suspects(ev["sensor"], "command", cmd_raw, user, hint)
+
+
+def _unit_failed_event(entry, msg):
+    """The unit-failed event, or None when `entry` is not a PID 1 "Failed with result" line."""
+    if not (entry.get("_PID") == "1" and "Failed with result" in msg):
+        return None
+    # PID 1 and unit names come from the system manager (root-defined units), not from a user
+    unit = entry.get("UNIT")
+    if not isinstance(unit, str):
+        m = _FAILED_RE.match(msg)
+        unit = m.group(1) if m else "unknown-unit"
+    return [_ev("systemd.unit-failed", "alert", "unit %s failed: %s" % (unit, msg[:UNIT_WHAT_LIMIT]),
+                "systemd.unit-failed:%s" % unit, {"unit": unit, "message": msg[:UNIT_EVIDENCE_LIMIT]},
+                "systemctl status --lines=0 --no-pager %s" % shlex.quote(unit),
+                message=t("stream.unit_failed", unit=unit))]
+
+
+def _oom_event(entry, msg):
+    """The OOM-kill event(s), or None when `entry` is not a kernel OOM line."""
+    if entry.get("_TRANSPORT") != "kernel":
+        return None
+    m = _OOM_RE.search(msg)
+    if not m:
+        return None
+    # the process name (comm) is chosen by whoever started the process: untrusted
+    pid, name_raw = m.groups()
+    name = clean(name_raw, PROCESS_LIMIT)
+    hint = "journalctl -k --since -1h | grep 'Out of memory'"
+    ev = _ev("kernel.oom-kill", "alert",
+             "OOM killer killed %s (pid %s)" % (quote(name_raw, PROCESS_LIMIT), pid),
+             "kernel.oom-kill:%s" % name, {"process": name, "pid": pid}, hint,
+             message=t("stream.oom", name=quote(name_raw, PROCESS_LIMIT)))
+    return [ev] + _suspects(ev["sensor"], "process", name_raw, "kernel", hint)
+
+
 def journal_events(entry, known_ips_path=None):
     """Map one journald JSON entry to a list of bus events: [] (nothing), [event], or [event plus
     `input.injection-suspect` warnings]. Trusted fields (_SYSTEMD_UNIT, _PID, _TRANSPORT are set by
     journald, not by the sender) are required, so a user cannot forge an alert by logging a
-    lookalike line."""
+    lookalike line. The first handler that recognises the entry decides, in this order."""
     msg = entry.get("MESSAGE")
     if not isinstance(msg, str):
         return []
-    ident = entry.get("SYSLOG_IDENTIFIER")
-
-    if entry.get("_SYSTEMD_UNIT") == "ssh.service" and msg.startswith("Accepted "):
-        # "Accepted " with the capital A and the space: the log line "...PubkeyAcceptedAlgorithms..."
-        # contains "Accepted" too and is not a login (the trap that fooled the first draft).
-        m = _SSH_RE.match(msg)
-        if not m:
-            return []
-        method, user_raw, ip_raw = m.groups()
-        user, ip, method = clean(user_raw, USER_LIMIT), clean(ip_raw, IP_LIMIT), clean(method, 32)
-        known = _norm_ip(ip_raw) in load_known_ips(known_ips_path or known_ips_default())
-        fp = "auth.ssh.accepted-login:%s@%s" % (user, ip.replace(":", "_"))
-        cmd = "journalctl -u ssh --since -1h | grep 'Accepted '"
-        ev = _ev("auth.ssh.accepted-login", "info" if known else "critical",
-                 "SSH login by %s from %s IP %s (%s)" % (quote(user_raw, USER_LIMIT),
-                                                         "known" if known else "UNKNOWN", ip, method),
-                 fp, {"user": user, "ip": ip, "method": method, "known_ip": known}, cmd)
-        if not known:
-            ev["message"] = t("stream.ssh_unknown", user=quote(user_raw, USER_LIMIT), ip=ip)
-        return [ev] + _suspects(ev["sensor"], "user", user_raw, ip, cmd)
-
-    if ident == "sudo" and "COMMAND=" in msg:
-        m = _SUDO_RE.match(msg)
-        if not m:
-            return []
-        user_raw, fields, cmd_raw = m.group(1), m.group(2), m.group(3).strip()
-        sender = sudo_sender(entry, user_raw)
-        if sender not in {"ok", "ok-exe-missing"}:
-            uid = clean(entry.get("_UID", ""), UID_LIMIT)
-            return [_ev(FORGED_SENSOR, "warning",
-                        "forged sudo log line rejected (sender uid %s: %s)" % (uid, sender),
-                        "auth.sudo.forged:uid%s:%s" % (uid, sender),
-                        {"uid": uid, "reason": sender}, "journalctl -t sudo --since -1h")]
-        first = fields.split(";", 1)[0].strip()
-        reason = clean(first, 80) if first and not _SUDO_FIELD.match(first) else ""
-        exe = clean(os.path.basename(cmd_raw.split()[0]) if cmd_raw.split() else "-", 64)
-        user = clean(user_raw, USER_LIMIT)
-        me = self_user()
-        cwd = next((f.strip()[4:] for f in fields.split(";") if f.strip().startswith("PWD=")), None)
-        if (not reason and user_raw == me and me != "root" and exe in ATLAS_MEASURE_EXES
-                and cwd is not None and os.path.realpath(cwd) == os.path.realpath(bus.atlas_dir())):
-            # the Atlas user running its allowlisted read-only commands (~300 per patrol): not news
-            return []
-        agent = user_raw in agent_sudo_users() and not reason
-        trusted = (agent or user_raw in trusted_sudo_users()) and not reason
-        what = "sudo by %s%s: %s" % (quote(user_raw, USER_LIMIT), " (%s)" % reason if reason else "",
-                                     quote(cmd_raw, COMMAND_WHAT_LIMIT))
-        evidence = {"user": user, "command": clean(cmd_raw, COMMAND_EVIDENCE_LIMIT)}
-        if sender == "ok-exe-missing":
-            evidence["exe"] = "missing"
-        if agent:
-            evidence["digest"] = True
-        if reason:
-            evidence["reason"] = reason
-        hint = "journalctl -t sudo --since -1h"
-        ev = _ev("auth.sudo.command", "info" if trusted else "alert",
-                 what, "auth.sudo.command:%s:%s" % (user, exe), evidence, hint)
-        if not trusted:
-            ev["message"] = t("stream.sudo", user=quote(user_raw, USER_LIMIT),
-                              command=quote(cmd_raw, COMMAND_WHAT_LIMIT))
-        return [ev] + _suspects(ev["sensor"], "command", cmd_raw, user, hint)
-
-    if entry.get("_PID") == "1" and "Failed with result" in msg:
-        # PID 1 and unit names come from the system manager (root-defined units), not from a user
-        unit = entry.get("UNIT")
-        if not isinstance(unit, str):
-            m = _FAILED_RE.match(msg)
-            unit = m.group(1) if m else "unknown-unit"
-        return [_ev("systemd.unit-failed", "alert", "unit %s failed: %s" % (unit, msg[:200]),
-                    "systemd.unit-failed:%s" % unit, {"unit": unit, "message": msg[:300]},
-                    "systemctl status --lines=0 --no-pager %s" % shlex.quote(unit),
-                    message=t("stream.unit_failed", unit=unit))]
-
-    if entry.get("_TRANSPORT") == "kernel":
-        m = _OOM_RE.search(msg)
-        if m:
-            # the process name (comm) is chosen by whoever started the process: untrusted
-            pid, name_raw = m.groups()
-            name = clean(name_raw, PROCESS_LIMIT)
-            hint = "journalctl -k --since -1h | grep 'Out of memory'"
-            ev = _ev("kernel.oom-kill", "alert",
-                     "OOM killer killed %s (pid %s)" % (quote(name_raw, PROCESS_LIMIT), pid),
-                     "kernel.oom-kill:%s" % name, {"process": name, "pid": pid}, hint,
-                     message=t("stream.oom", name=quote(name_raw, PROCESS_LIMIT)))
-            return [ev] + _suspects(ev["sensor"], "process", name_raw, "kernel", hint)
+    for handler in (lambda: _ssh_event(entry, msg, known_ips_path), lambda: _sudo_event(entry, msg),
+                    lambda: _unit_failed_event(entry, msg), lambda: _oom_event(entry, msg)):
+        events = handler()
+        if events is not None:
+            return events
     return []
 
 
@@ -375,7 +414,7 @@ def web_events(line):
     method = clean(method_raw, METHOD_LIMIT)
     prefix = line[:m.start()].split()
     # %v (the configured ServerName) and %a (the peer address) are not client text; cleaned anyway
-    vhost = clean(prefix[1], 80) if len(prefix) >= 3 else "-"
+    vhost = clean(prefix[1], VHOST_LIMIT) if len(prefix) >= 3 else "-"
     ip = clean(prefix[2], IP_LIMIT) if len(prefix) >= 3 else "-"
     path_raw = path.split("?", 1)[0]
     path_c = clean(path_raw, PATH_LIMIT)
@@ -384,7 +423,7 @@ def web_events(line):
     # Letters only (hex nibble -> a..p): a digit run would look like an epoch to the bus fingerprint sanitizer
     # and be replaced, which would merge distinct paths again.
     digest = "".join("abcdefghijklmnop"[int(c, 16)]
-                     for c in hashlib.sha256(path_raw.encode("utf-8", "surrogateescape")).hexdigest()[:12])
+                     for c in hashlib.sha256(path_raw.encode("utf-8", "surrogateescape")).hexdigest()[:PATH_DIGEST_LEN])
     # grep needs a literal prefix of the logged path, not the "..." of a shortened one
     grep_key = clean(path_raw, len(path_raw) + 1)[:PATH_LIMIT]
     if 200 <= status < 300:
@@ -470,7 +509,7 @@ class Source(threading.Thread):
         if p and p.poll() is None:
             p.terminate()
             try:
-                p.wait(timeout=5)
+                p.wait(timeout=STOP_WAIT_S)
             except subprocess.TimeoutExpired:
                 p.kill()
         if p:
@@ -535,25 +574,8 @@ def router_loop(stop, ready):
     ready.set()
 
 
-def main():
-    stop = threading.Event()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, lambda *_: stop.set())
-    state = router.state_dir()
-    try:
-        bus.ensure_private_dir(state)
-    except bus.UnsafeStateDir as e:
-        print("sentinel-stream: unsafe runtime directory %s (%s)" % (state, e.code), file=sys.stderr, flush=True)
-        return 3
-    heartbeat = state / "stream.heartbeat"
-    hb_secs = _env_num("SENTINEL_HEARTBEAT_SECS", DEFAULT_HEARTBEAT_SECS)
-    wd_secs = _env_num("SENTINEL_WATCHDOG_SECS", DEFAULT_WATCHDOG_SECS)
-    unreadable = _env_num("SENTINEL_UNREADABLE_SECS", DEFAULT_UNREADABLE_SECS)
-    known = known_ips_default()
-    web_log = os.environ.get("SENTINEL_WEB_LOG") or WEB_LOG_DEFAULT
-
-    limiter = SuspectLimiter()
-
+def _make_sources(stop, limiter, known, web_log):
+    """The two followers: journal and web, both feeding the bus through the shared limiter."""
     def on_journal(line):
         try:
             entry = json.loads(line)
@@ -567,7 +589,7 @@ def main():
             emit_safe(ev)
 
     web_cmd_env = os.environ.get("SENTINEL_WEB_CMD")
-    sources = [
+    return [
         Source("journal", lambda: shlex.split(os.environ.get("SENTINEL_JOURNAL_CMD") or JOURNAL_CMD),
                on_journal, stop),
         Source("web", lambda: shlex.split(web_cmd_env or "tail -n 0 -F %s" % shlex.quote(web_log)),
@@ -575,6 +597,49 @@ def main():
                # tail -F happily waits for a file that never appears: check readability ourselves
                readable=(lambda: True) if web_cmd_env else (lambda: os.access(web_log, os.R_OK))),
     ]
+
+
+def _tick(rt, sources, limiter, unreadable, beat, now):
+    """One main-loop pass: health events, the limiter summary, then heartbeat and watchdog while every
+    thread lives. `beat` carries the heartbeat path, the intervals and the last beat times (mutated).
+    Beat only while every thread lives: a crashed thread must stop the beat, so that escalation
+    (heartbeat) and systemd (watchdog restart) see it. Silence is a signal."""
+    alive = rt.is_alive() and all(s.is_alive() for s in sources)
+    for s in sources:
+        ev = s.check_health(unreadable)
+        if ev:
+            emit_safe(ev)
+    for ev in limiter.flush():   # the hourly "suppressed" summary even when no new event arrives
+        emit_safe(ev)
+    if alive and now - beat["last_hb"] >= beat["hb_secs"]:
+        try:
+            beat["heartbeat"].touch()
+            os.utime(beat["heartbeat"])
+        except OSError as e:
+            print("sentinel-stream: heartbeat: %s" % e, file=sys.stderr, flush=True)
+        beat["last_hb"] = now
+    if alive and now - beat["last_wd"] >= beat["wd_secs"]:
+        sd_notify("WATCHDOG=1")
+        beat["last_wd"] = now
+
+
+def main():
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
+    state = router.state_dir()
+    try:
+        bus.ensure_private_dir(state)
+    except bus.UnsafeStateDir as e:
+        print("sentinel-stream: unsafe runtime directory %s (%s)" % (state, e.code), file=sys.stderr, flush=True)
+        return 3
+    beat = {"heartbeat": state / "stream.heartbeat", "last_hb": 0.0, "last_wd": 0.0,
+            "hb_secs": _env_num("SENTINEL_HEARTBEAT_SECS", DEFAULT_HEARTBEAT_SECS),
+            "wd_secs": _env_num("SENTINEL_WATCHDOG_SECS", DEFAULT_WATCHDOG_SECS)}
+    unreadable = _env_num("SENTINEL_UNREADABLE_SECS", DEFAULT_UNREADABLE_SECS)
+    web_log = os.environ.get("SENTINEL_WEB_LOG") or WEB_LOG_DEFAULT
+    limiter = SuspectLimiter()
+    sources = _make_sources(stop, limiter, known_ips_default(), web_log)
     ready = threading.Event()
     rt = threading.Thread(target=router_loop, args=(stop, ready), name="router", daemon=True)
     rt.start()
@@ -582,29 +647,8 @@ def main():
     for s in sources:
         s.start()
     sd_notify("READY=1")
-
-    last_hb = last_wd = 0.0
     while not stop.is_set():
-        now = time.monotonic()
-        alive = rt.is_alive() and all(s.is_alive() for s in sources)
-        for s in sources:
-            ev = s.check_health(unreadable)
-            if ev:
-                emit_safe(ev)
-        for ev in limiter.flush():   # the hourly "suppressed" summary even when no new event arrives
-            emit_safe(ev)
-        # Beat only while every thread lives: a crashed thread must stop the beat, so that
-        # escalation (heartbeat) and systemd (watchdog restart) see it. Silence is a signal.
-        if alive and now - last_hb >= hb_secs:
-            try:
-                heartbeat.touch()
-                os.utime(heartbeat)
-            except OSError as e:
-                print("sentinel-stream: heartbeat: %s" % e, file=sys.stderr, flush=True)
-            last_hb = now
-        if alive and now - last_wd >= wd_secs:
-            sd_notify("WATCHDOG=1")
-            last_wd = now
+        _tick(rt, sources, limiter, unreadable, beat, time.monotonic())
         stop.wait(TICK)
     sd_notify("STOPPING=1")
     for s in sources:

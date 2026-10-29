@@ -34,6 +34,10 @@ default_notify = _notify.send  # alias kept for callers and tests
 # 6 h: the human is woken at most 4 times a day for the same fingerprint.
 HUMAN_WINDOW_SECS = int(os.environ.get("SENTINEL_HUMAN_WINDOW_SECS") or 6 * 3600)
 NOTIFY_TIMEOUT = 60
+# Timeout for the presence probes (screen, systemctl) of resident_present.
+PRESENCE_CMD_TIMEOUT = 10
+# Characters of the event text in a notification subject.
+SUBJECT_LIMIT = 120
 
 
 def state_dir():
@@ -51,7 +55,7 @@ def _atlas():
 def _run(cmd_env, default, args):
     cmd = shlex.split(os.environ.get(cmd_env) or default) + args
     try:
-        return subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=PRESENCE_CMD_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired):
         return None
 
@@ -130,7 +134,7 @@ def route(event, state_path=None, notify=None, presence=None, now=None):
         # No trusted place for the dedup state: notify without dedup rather than stay silent.
         print("sentinel-router: unsafe runtime directory %s (%s)" % (e.path, e.code), file=sys.stderr, flush=True)
         text = event.get("message") or event.get("message_pl") or event.get("what", "")
-        return bool(notify(t("router.subject", what=event.get("what", "")[:120]), "%s [%s]" % (text, fp)))
+        return bool(notify(t("router.subject", what=event.get("what", "")[:SUBJECT_LIMIT]), "%s [%s]" % (text, fp)))
     with open(str(state_path) + ".lock", "a") as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         state = _load(state_path)
@@ -140,7 +144,7 @@ def route(event, state_path=None, notify=None, presence=None, now=None):
         # read for one release so that events written by an older patrol keep their text.
         text = event.get("message") or event.get("message_pl") or event.get("what", "")
         body = "%s [%s]" % (text, fp)
-        subject = t("router.subject", what=event.get("what", "")[:120])
+        subject = t("router.subject", what=event.get("what", "")[:SUBJECT_LIMIT])
         if not notify(subject, body):
             return False  # not recorded as sent: the next critical event retries
         state = {k: v for k, v in state.items() if now - float(v) < HUMAN_WINDOW_SECS}
