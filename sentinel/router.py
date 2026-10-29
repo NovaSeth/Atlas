@@ -26,13 +26,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "atlas"))
 from i18n import t  # noqa: E402
 
+import bus  # noqa: E402
+import notify as _notify  # noqa: E402
+
+default_notify = _notify.send  # alias kept for callers and tests
+
 # 6 h: the human is woken at most 4 times a day for the same fingerprint.
 HUMAN_WINDOW_SECS = int(os.environ.get("SENTINEL_HUMAN_WINDOW_SECS") or 6 * 3600)
 NOTIFY_TIMEOUT = 60
 
 
 def state_dir():
-    return Path(os.environ.get("SENTINEL_STATE_DIR") or "/var/tmp/sentinel")
+    return bus.runtime_dir()
 
 
 def default_state_path():
@@ -86,28 +91,6 @@ def _load(path):
         return {}
 
 
-def default_notify(subject, body):
-    """Send one notification; True when a channel accepted it."""
-    env = dict(os.environ)
-    cmd = os.environ.get("SENTINEL_NOTIFY_CMD", "").strip()
-    try:
-        if cmd:
-            r = subprocess.run(shlex.split(cmd) + [subject, body], capture_output=True, text=True,
-                               timeout=NOTIFY_TIMEOUT, env=env)
-            return r.returncode == 0
-        to = os.environ.get("SENTINEL_EMAIL", "").strip()
-        if not to:
-            print("sentinel-router: no recipient configured (SENTINEL_EMAIL and SENTINEL_NOTIFY_CMD empty)",
-                  file=sys.stderr, flush=True)
-            return False
-        mail = shlex.split(os.environ.get("SENTINEL_MAIL_CMD") or "mail")
-        r = subprocess.run(mail + ["-s", subject, to], input=body + "\n", capture_output=True, text=True,
-                           timeout=NOTIFY_TIMEOUT, env=env)
-        return r.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-
-
 def _command_notifier(cmd):
     """A notifier for an explicit command (path or command line), used by tests and callers."""
     def notify(subject, body):
@@ -132,11 +115,22 @@ def route(event, state_path=None, notify=None, presence=None, now=None):
     now = time.time() if now is None else now
     state_path = Path(state_path) if state_path else default_state_path()
     if notify is None:
-        notify = default_notify
+        def notify(subject, body):
+            # sent or queued (the escalation timer delivers the outbox) counts as handed off
+            return _notify.send_or_queue(subject, body, "router") in ("sent", "queued")
     elif isinstance(notify, (str, os.PathLike)):
         notify = _command_notifier(str(notify))
     fp = event["fingerprint"]
-    state_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if state_path.parent == state_dir():
+            bus.ensure_private_dir(state_path.parent)
+        else:
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+    except bus.UnsafeStateDir as e:
+        # No trusted place for the dedup state: notify without dedup rather than stay silent.
+        print("sentinel-router: unsafe runtime directory %s (%s)" % (e.path, e.code), file=sys.stderr, flush=True)
+        text = event.get("message") or event.get("message_pl") or event.get("what", "")
+        return bool(notify(t("router.subject", what=event.get("what", "")[:120]), "%s [%s]" % (text, fp)))
     with open(str(state_path) + ".lock", "a") as lf:
         fcntl.flock(lf, fcntl.LOCK_EX)
         state = _load(state_path)
