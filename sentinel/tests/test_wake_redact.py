@@ -144,3 +144,76 @@ class ReplayBudget(unittest.TestCase):
         self.assertIn("7", out[-1])
         self.assertIn("events.jsonl", out[-1])
         self.assertNotIn(PAYLOAD, "\n".join(out))
+
+
+def run_follow(d, bus_name, events, state, *args, wait=2.0):
+    path = d / bus_name
+    for e in events:
+        bus.emit(e, path=path)
+    env = dict(os.environ, SENTINEL_BUS=str(path), SENTINEL_BUS_LOCK=str(d / "events.lock"),
+               SENTINEL_STATE_DIR=str(state))
+    p = subprocess.Popen([sys.executable, str(SENTINEL / "bus.py"), "follow", "--min-severity", "alert",
+                          "--dedup-seconds", "3600", "--redact-untrusted", "--max-per-hour", "3", *args],
+                         env=env, stdout=subprocess.PIPE, text=True)
+    lines = []
+    threading.Thread(target=lambda: [lines.append(l.rstrip("\n")) for l in p.stdout], daemon=True).start()
+    time.sleep(wait)
+    p.kill()
+    p.wait()
+    return lines
+
+
+def run_replay(d, path, seen, state, limit="3"):
+    env = dict(os.environ, SENTINEL_STATE_DIR=str(state), SENTINEL_WAKE_MAX_PER_HOUR=limit)
+    return subprocess.run([sys.executable, str(SENTINEL / "bus.py"), "replay", str(path), "0",
+                           str(path.stat().st_ino), str(seen), "--redact-untrusted"],
+                          capture_output=True, text=True, timeout=20, env=env)
+
+
+class SharedBudget(unittest.TestCase):
+    def test_restarted_followers_share_one_window(self):
+        d = tmpdir(self)
+        state = d / "state"
+        first = run_follow(d, "a.jsonl", [hostile("web.sensitive-hit", i) for i in range(3)], state)
+        second = run_follow(d, "b.jsonl", [hostile("web.sensitive-hit", i + 10) for i in range(3)], state)
+        self.assertEqual(len(first), 3, first)
+        self.assertEqual(second, [], second)
+
+    def test_replay_shares_the_window_with_the_follower(self):
+        d = tmpdir(self)
+        state = d / "state"
+        run_follow(d, "a.jsonl", [hostile("web.sensitive-hit", i) for i in range(3)], state)
+        path = d / "r.jsonl"
+        for i in range(5):
+            bus.emit(hostile("auth.sudo.command", i + 20), path=path)
+        seen = d / "seen"
+        seen.write_text("")
+        out = run_replay(d, path, seen, state).stdout.splitlines()
+        self.assertEqual(len(out), 1, out)
+        self.assertIn("events.jsonl", out[0])
+
+    def test_corrupt_state_counts_as_used_up_and_says_so_once(self):
+        d = tmpdir(self)
+        state = d / "state"
+        state.mkdir(mode=0o750)
+        (state / "wake-budget.json").write_text("{not json")
+        lines = run_follow(d, "a.jsonl", [hostile("web.sensitive-hit", i) for i in range(4)], state)
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("unreadable", lines[0])
+        self.assertNotIn(PAYLOAD, lines[0])
+
+
+class ReplayStateFailure(unittest.TestCase):
+    def test_unwritable_seen_file_is_reported_on_stdout_and_exit_code(self):
+        d = tmpdir(self)
+        path = d / "events.jsonl"
+        for i in range(2):
+            bus.emit(hostile("auth.sudo.command", i), path=path)
+        seen = d / "seen"
+        seen.write_text("")
+        seen.chmod(0o444)
+        r = run_replay(d, path, seen, d / "state", limit="12")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertEqual(sum("replay state not saved" in l for l in r.stdout.splitlines()), 1, r.stdout)
+        self.assertIn("events may repeat", r.stdout)
+        self.assertEqual(sum("untrusted text not shown" in l for l in r.stdout.splitlines()), 2)
