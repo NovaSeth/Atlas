@@ -38,7 +38,7 @@ class StartScript(unittest.TestCase):
             self.bin / "claude",
             f'echo "claude $*" >> {self.trace}\n[ "$1" = auth ] && exit ${{CLAUDE_AUTH_RC:-0}}\nexit 0',
         )
-        stub(self.bin / "screen", f'echo "screen $*" >> {self.trace}\nexit ${{SCREEN_LS_RC:-1}}')
+        stub(self.bin / "screen", f'echo "screen $*" >> {self.trace}\n[ "$1" = -ls ] && exit 1\nexit 0')
         stub(self.bin / "codex", "echo SECRET-ACCOUNT-DATA; exit 1")
         stub(self.bin / "sleep")
         self.env_file = self.tmp / "resident.env"

@@ -1,0 +1,32 @@
+# Starts the AI resident session after a reboot. This is NOT an official Claude Code feature.
+#
+# Why a system service and not a user service: user services die at logout unless lingering is enabled.
+# Risk: this starts an AI with shell access at boot, with nobody watching. It can do what the account
+# @RESIDENT_USER@ may do and nothing more: keep that account's rights narrow (docs/resident.md) and
+# know how to stop it (touch <state>/RESIDENT-OFF, then systemctl stop atlas-resident).
+#
+# The start script exits 3 when a login is gone: the unit fails, and with
+# SENTINEL_RESIDENT_UNIT=atlas-resident.service in sentinel.env Atlas escalates and tells the human the
+# resident is dead. Config: /etc/atlas/resident.env (examples/resident/resident.env).
+[Unit]
+Description=Atlas AI resident session (screen)
+Documentation=file://@ATLAS_CODE@/docs/resident.md
+After=network-online.target
+Wants=network-online.target
+# In [Unit], not [Service]: an expired login must not become a crash loop that burns tokens.
+StartLimitIntervalSec=3600
+StartLimitBurst=5
+
+[Service]
+# screen -D keeps the main process, so Type=exec fits.
+Type=exec
+User=@RESIDENT_USER@
+Environment=RESIDENT_ENV=/etc/atlas/resident.env
+Environment=SENTINEL_ATLAS=@ATLAS_STATE@
+Environment=TERM=xterm-256color
+ExecStart=@ATLAS_CODE@/examples/resident/start-resident.sh
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
