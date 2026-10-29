@@ -200,7 +200,7 @@ def have(tool):
 # last logout (lingering off), so it is per-login and transient: every SSH session would otherwise show as
 # drift (ADDED at login, REMOVED at logout). Only this exact shape is skipped. user-runtime-dir@<uid>.service
 # is a RemainAfterExit oneshot (state "exited"), which `--state=running` never lists, so it needs no entry.
-PER_LOGIN_UNIT_RE = re.compile(r"user@[0-9]+\.service")
+PER_LOGIN_UNIT_RE = re.compile(r"user@[0-9]{1,10}\.service")  # uid: 1-10 digits (32-bit)
 
 
 def is_per_login_unit(name):
@@ -1201,7 +1201,7 @@ def cmd_check():
     except (OSError, ValueError) as e:
         print(t("atlas.current_unreadable", error=e), file=sys.stderr)
         return 2
-    changes = shorten_packages(diff(without_per_login_units(baseline), snap))
+    changes = shorten_packages(diff(without_per_login_units(baseline), without_per_login_units(snap)))
     if not changes:
         print("ATLAS OK - no changes")
         return 0
