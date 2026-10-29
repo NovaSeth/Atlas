@@ -140,7 +140,9 @@ ReadWritePaths=/var/log/my-notifier
 ```
 
 A setuid mail program cannot raise its privileges inside the stream unit: a failed notice goes to the outbox in
-`runtime/` and is retried by escalation. After changing the units, run `sentinel/units/verify-hardening.sh` (as root; `--print` shows the checks without root).
+`runtime/` and is retried by escalation. After changing the units, run `sudo /opt/atlas/sentinel/units/verify-hardening.sh --code /opt/atlas --state /var/lib/atlas --user atlas`
+(add `--mail-to <local user>` to test mail under the escalation unit; append `--print` to show the checks without
+root).
 
 ## Languages (`i18n/`)
 
