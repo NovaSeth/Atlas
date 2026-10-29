@@ -16,6 +16,7 @@ STATE=/var/lib/atlas
 AUSER=atlas
 DRY=0 APACHE=0 CRON=0 YES=0
 RUSER='' PMODE='' RNAME=''
+# Tests only: ATLAS_ETC_DIR points the resident config at a private dir; production uses /etc/atlas.
 ETC_DIR=${ATLAS_ETC_DIR:-/etc/atlas}
 SYSTEMD_DIR=${ATLAS_SYSTEMD_DIR:-/etc/systemd/system}
 SUDOERS_DIR=${ATLAS_SUDOERS_DIR:-/etc/sudoers.d}

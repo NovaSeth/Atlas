@@ -2,6 +2,7 @@
 """install.sh --resident-user / --permission-mode / --resident-name: the trust level is the operator's explicit
 choice; the installer renders the resident files but never enables or starts the unit. uninstall.sh removes them."""
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -18,6 +19,7 @@ class InstallResident(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="atlas-install-res-"))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.state = self.tmp / "state"
+        self.etc = self.tmp / "etc" / "atlas"  # private config dir: tests never read the real /etc
 
     def run_install(self, *args):
         return subprocess.run(
@@ -37,6 +39,7 @@ class InstallResident(unittest.TestCase):
             text=True,
             timeout=120,
             stdin=subprocess.DEVNULL,
+            env={**os.environ, "ATLAS_ETC_DIR": str(self.etc)},
         )
 
     def test_resident_user_without_mode_is_refused(self):
@@ -82,6 +85,14 @@ class InstallResident(unittest.TestCase):
         self.assertNotRegex(out, r"\[dry-run\].*(enable|start).*atlas-resident")
         self.assertIn("claude auth login", out)
         self.assertIn("systemctl enable --now atlas-resident", out)
+
+    def test_existing_resident_env_is_kept(self):
+        self.etc.mkdir(parents=True)
+        (self.etc / "resident.env").write_text("RESIDENT_PERMISSION_MODE=plan\n")
+        r = self.run_install("--resident-user", "ops-test", "--permission-mode", "acceptEdits")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(f"keeping existing {self.etc}/resident.env", r.stdout)
+        self.assertNotRegex(r.stdout, r"install -m 0644 -o root -g root \S+ \S*/atlas/resident\.env")
 
     def test_bypass_adds_allow_flag_and_warning(self):
         r = self.run_install("--resident-user", "ops-test", "--permission-mode", "bypassPermissions")
@@ -130,6 +141,7 @@ class InstallResident(unittest.TestCase):
             text=True,
             timeout=120,
             stdin=subprocess.DEVNULL,
+            env={**os.environ, "ATLAS_ETC_DIR": str(self.etc)},
         )
 
     def test_missing_template_is_refused(self):
