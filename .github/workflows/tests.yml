@@ -50,6 +50,17 @@ jobs:
           done < <(git ls-files -z '*.sh')
           exit "$status"
 
+      - name: Ruff lint and format
+        run: |
+          python3 -m pip install --quiet ruff==0.17.3
+          ruff check --config .github/ruff.toml .
+          ruff format --config .github/ruff.toml --check .
+
+      - name: Shellcheck
+        run: |
+          sudo apt-get install -y -qq shellcheck
+          git ls-files -z '*.sh' | xargs -0 shellcheck -x
+
       - name: Installer dry run
         run: ./install.sh --dry-run --code /opt/atlas --state /tmp/atlas-dry --user atlas
 

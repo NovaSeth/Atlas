@@ -1,0 +1,9 @@
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "B", "UP"]
+ignore = ["UP031"]  # printf formatting is the house style
+
+[format]
+quote-style = "double"
