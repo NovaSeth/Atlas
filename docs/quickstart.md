@@ -45,12 +45,10 @@ Log in over SSH as your sudo account and install what Atlas and this guide need:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git python3 sudo cron iproute2 curl tmux bsd-mailx
+sudo apt-get install -y git python3 sudo cron iproute2 curl tmux
 ```
 
-`bsd-mailx` provides the `mail` command; the installer may also ask which mail setup to use (an MTA such as
-postfix). "Internet Site" or "Local only" is fine for now; step 3 shows how to check that mail really leaves the
-server. `tmux` keeps the Claude session alive when you disconnect.
+`tmux` keeps the Claude session alive when you disconnect. Sending mail is set up in step 3, where you choose how alerts reach you.
 
 You should see apt finish without errors. Check:
 
@@ -73,7 +71,7 @@ sudo usermod -aG sudo ops      # on Debian/Ubuntu this is the group that may use
 Then open a new SSH session as `ops` and check `sudo -v` works. Claude runs as `ops`, never as `root`.
 
 If something goes wrong: `Python 3.10` on Ubuntu 22.04 or older means the server is too old for Atlas; use a newer
-image. `E: Unable to locate package bsd-mailx` on Ubuntu: use `mailutils` instead.
+image. In recipe (a) of step 3, `Unable to locate package bsd-mailx` on Ubuntu: use `mailutils` instead.
 
 ## 2. Get Atlas
 
@@ -143,7 +141,8 @@ makes one by itself.
 sudo nano /var/lib/atlas/sentinel.env
 ```
 
-Set at least these lines (use your own address), and tell Atlas which account is the AI's, so Claude's routine
+The file already contains empty `SENTINEL_EMAIL=` and `SENTINEL_AGENT_SUDO_USERS=` lines: **edit those existing
+lines** (do not add duplicates). Use your own address, and tell Atlas which account is the AI's, so Claude's routine
 `sudo` is not an alarm:
 
 ```
@@ -151,23 +150,86 @@ SENTINEL_EMAIL=you@example.com
 SENTINEL_AGENT_SUDO_USERS=ops
 ```
 
-Optionally set `SENTINEL_NOTIFY_CMD` to another channel (a command called as `<cmd> "<subject>" "<body>"`); see
-[docs/configuration.md](configuration.md). Then restart the stream and give `ops` read access to Atlas state:
+The next part sets up how alerts reach you. See [docs/configuration.md](configuration.md) for every key. Then restart the stream and give `ops` read access to Atlas state:
 
 ```bash
 sudo systemctl restart sentinel-stream.service
-sudo usermod -aG atlas ops      # takes effect at your next login: log out and in again
+sudo usermod -aG atlas ops      # takes effect only at your next SSH login; `exec bash -l` does NOT refresh groups
 ```
 
-**Test that a mail reaches you** before you rely on it:
+### Make sure alerts reach you
+
+A fresh server usually cannot deliver mail to large providers directly, and an alert nobody receives is worth
+nothing. Pick one recipe (about 5 minutes) and finish it with a real test message.
+
+**Recipe (a): mail through an external SMTP relay with msmtp.** You need an account at a mail provider that offers
+SMTP, and an **app password** for it (never your main password). Replace the example values:
 
 ```bash
-echo "Atlas mail test" | mail -s "atlas test" you@example.com
+sudo apt-get install -y msmtp msmtp-mta bsd-mailx
+sudo install -m 0600 -o atlas -g atlas /dev/null /etc/atlas-smtp-pass
+sudo nano /etc/atlas-smtp-pass        # the app password on one line, nothing else
+sudo nano /etc/msmtprc
+sudo chown atlas:atlas /etc/msmtprc && sudo chmod 0600 /etc/msmtprc
 ```
 
-You should receive it within a few minutes (look in spam too). If not, the server cannot send mail yet: configure
-the MTA (`sudo dpkg-reconfigure postfix`) or use a notify command instead. A fresh VPS often cannot deliver to
-large providers directly; a relay or `SENTINEL_NOTIFY_CMD` is the reliable way.
+Put this in `/etc/msmtprc` (host, port, user and addresses are examples):
+
+```
+defaults
+auth on
+tls on
+tls_trust_file /etc/ssl/certs/ca-certificates.crt
+
+account relay
+host smtp.example.com
+port 587
+tls_starttls on
+user alerts@example.com
+from alerts@example.com
+passwordeval cat /etc/atlas-smtp-pass
+
+account default : relay
+```
+
+Set `SENTINEL_EMAIL=you@example.com` in `sentinel.env`, and test as the Atlas account, which is who sends the alerts:
+
+```bash
+echo "Atlas mail test" | sudo -u atlas mail -s "atlas test" you@example.com
+```
+
+You should receive the message within a minute or two (check spam). If not, `sudo -u atlas msmtp --debug
+you@example.com < /dev/null` shows where the SMTP conversation fails: usually a wrong password, a provider that
+needs an app password, or a blocked port 587.
+
+**Recipe (b): phone push with ntfy.** Install the ntfy app on your phone and subscribe to a topic with a long random
+name that only you know, for example `atlas-` followed by 24 random letters and digits. The topic name is the
+only secret: anyone who knows it can read and send. The notices travel through the public service ntfy.sh (what an
+outside service sees is discussed under "Threat model" in [docs/security.md](security.md)); keep subjects and bodies
+short. Create `/usr/local/bin/atlas-ntfy` (replace the topic):
+
+```bash
+sudo tee /usr/local/bin/atlas-ntfy > /dev/null <<'EOF'
+#!/bin/sh
+# Atlas calls: atlas-ntfy "<subject>" "<body>"
+curl -fsS -m 10 -H "Title: $1" -d "$2" https://ntfy.sh/atlas-REPLACE-WITH-YOUR-RANDOM-TOPIC
+EOF
+sudo chmod 0755 /usr/local/bin/atlas-ntfy
+```
+
+In `sentinel.env` set `SENTINEL_NOTIFY_CMD=/usr/local/bin/atlas-ntfy` (Atlas calls it as `<cmd> "<subject>" "<body>"`).
+Test it exactly as Atlas runs it, as the Atlas account:
+
+```bash
+sudo -u atlas /usr/local/bin/atlas-ntfy "atlas test" "hello from the server"
+echo "exit $?"
+```
+
+You should see a JSON reply from ntfy, `exit 0`, and the notification on your phone within seconds. `exit 6` or
+`22` means no network or a wrong URL. Nothing needs a restart: the escalation timer reads the file on its next run.
+Atlas has no separate test command; calling the notify command directly, as the Atlas account, is the test.
+
+You can use both recipes. Whichever you use, a test message must have reached you before you go on.
 
 **Check that the three watchers are alive:**
 
@@ -177,12 +239,13 @@ systemctl is-active sentinel-escalation.timer    # active
 sudo crontab -u atlas -l | grep atlas-managed    # the patrol line, every 30 minutes
 ```
 
-Run the patrol once by hand and look at its heartbeat:
+Run the patrol once by hand and look at its heartbeat. Read the state **as the Atlas account**: `ops` cannot read it
+until its next login, and a check that fails for lack of permission must not look like an all-clear:
 
 ```bash
 sudo -u atlas env SENTINEL_ATLAS=/var/lib/atlas /opt/atlas/atlas/patrol.sh
-tail -n 3 /var/lib/atlas/heartbeat.log
-ls /var/lib/atlas/ALERT 2>/dev/null || echo "no ALERT: nothing wrong"
+sudo -u atlas tail -n 3 /var/lib/atlas/heartbeat.log
+sudo -u atlas sh -c 'test -e /var/lib/atlas/ALERT && cat /var/lib/atlas/ALERT || echo "no ALERT file"'
 ```
 
 A fresh heartbeat line with the current time means the patrol runs. If you did not bless, an `ALERT` saying
@@ -190,7 +253,8 @@ A fresh heartbeat line with the current time means the patrol runs. If you did n
 
 If something goes wrong: `run as root` means you forgot `sudo`. `missing prerequisite` lines name the package to
 install. If `sentinel-stream.service` is not active, `systemctl status --lines=0 sentinel-stream.service` says why.
-`Permission denied` reading `/var/lib/atlas` as `ops` means you have not logged in again since `usermod`.
+`Permission denied` reading `/var/lib/atlas` as `ops` means you have not logged in again since `usermod`: log out and
+back in over SSH (a new login, not `exec bash -l`) before step 7, then check with `id` that `atlas` is in your groups.
 
 ## 4. Install Claude Code
 
@@ -281,7 +345,7 @@ claude --remote-control "atlas-server"
 ```
 
 Answer `y` to `Trust <directory>? [y/N]` (if asked) and `y` to `Enable Remote Control? (y/n)`. Then stop the
-session with `Ctrl+C`. Asking these questions interactively once matters: inside tmux or a service nobody is looking.
+session with `Ctrl+C` (press it twice if it does not stop). Asking these questions interactively once matters: inside tmux or a service nobody is looking.
 
 **Now the real session, inside tmux**, so it survives SSH logout:
 
@@ -303,7 +367,9 @@ and re-arm it when it expires. Never run a polling loop.
 SENTINEL_ATLAS=/var/lib/atlas /opt/atlas/sentinel/session-sensor.sh
 ```
 
-Claude starts the Monitor and replies that it is armed. Silence from then on is normal: the sensor prints a line only
+Claude starts the Monitor and replies that it is armed. Claude Code may ask your permission before it uses a tool (for example the Monitor, or reading files under
+`/opt/atlas`, outside this directory). Approve at the terminal, or from the phone in the same session. An unanswered
+question stalls Claude, though not the alarm path: Atlas still mails you. Silence from then on is normal: the sensor prints a line only
 when something changes.
 
 Now detach from tmux without stopping Claude: press `Ctrl+b`, release, then `d`.
@@ -321,8 +387,7 @@ or Claude Code is outdated (`claude update`). If you are asked to trust the fold
 
 You should see the conversation from step 7. Try: "What does Atlas see on this server right now?" or "Show me the
 Atlas alert state and the last patrol heartbeat." Claude runs `atlas.py show` and reads the state directory for
-you. You can ask it to investigate, restart a failed service, or explain an alert. It still needs your approval for
-privileged or destructive actions after it has read untrusted data.
+you. You can ask it to investigate, restart a failed service, or explain an alert. Expect it to ask your approval for risky actions; Atlas's rules for the agent are in [docs/resident.md](resident.md), section 7.
 
 Cloud sessions you may also see in the Code tab are a different thing: they run on Anthropic's machines and cannot
 see this server. Open the one with your server's name.
@@ -389,7 +454,7 @@ Do not bless anything yet. Wait for the patrol (it runs every 30 minutes), or ru
 
 ```bash
 sudo -u atlas env SENTINEL_ATLAS=/var/lib/atlas /opt/atlas/atlas/patrol.sh
-cat /var/lib/atlas/ALERT
+sudo -u atlas cat /var/lib/atlas/ALERT
 ```
 
 You should see an `ALERT` file that mentions the package change. Within a minute or two you should also see:

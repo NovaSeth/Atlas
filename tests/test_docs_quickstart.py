@@ -48,6 +48,17 @@ class QuickstartGuide(unittest.TestCase):
             self.assertGreater(lines.index(h), pos, h)
             pos = lines.index(h)
 
+    def test_alert_channels_and_state_reads(self):
+        text = guide()
+        self.assertIn("### Make sure alerts reach you", text)
+        self.assertLess(text.index("### Make sure alerts reach you"), text.index("## 4. Install Claude Code"))
+        for needle in ("msmtp", "SENTINEL_NOTIFY_CMD", "/usr/local/bin/atlas-ntfy", "https://ntfy.sh/"):
+            self.assertIn(needle, text, needle)
+        self.assertNotIn("dpkg-reconfigure postfix", text)
+        self.assertNotIn("nothing wrong", text)
+        for ln in code_lines(text):
+            self.assertNotRegex(ln, r"^(tail|cat|ls)\s+/var/lib/atlas", ln)
+
     def test_installer_flags_exist(self):
         install = (ROOT / "install.sh").read_text()
         uninstall = (ROOT / "uninstall.sh").read_text()
