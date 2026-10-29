@@ -39,6 +39,15 @@ It prints one line per **change** (an `ATLAS ALERT: ...` excerpt, a bus event of
 waiting report, an escalation problem, or `clear`). Silence costs nothing. When the monitor expires, re-arm it.
 Never run a periodic "check the server" loop inside your session: every tick re-reads your whole context.
 
+## After a restart
+
+If you were started by the machine's boot service, the first prompt says so. Do this first: read
+`<state>/BOOT` (when and how the machine came up) and, if it exists, `<state>/AFTER-REBOOT.md` (a note the previous
+session left) and carry it out; check that the Atlas stream is active, the heartbeat is fresh and
+`python3 /opt/atlas/atlas/atlas.py check` is clean; arm the monitor on the session sensor; report a short result.
+Do not restart the previous conversation and do not start a polling loop. If a login is missing you will not be
+started at all: the human is told by Atlas.
+
 ## Alert procedure
 
 <!-- alert-procedure:start -->

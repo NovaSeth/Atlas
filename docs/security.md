@@ -44,6 +44,10 @@ what leaves the host.
   [resident.md](resident.md)); its wake-ups are capped (`SENTINEL_WAKE_MAX_PER_HOUR`, default 12); its own `sudo`
   use (`SENTINEL_AGENT_SUDO_USERS`) is summarised in a daily digest.
 - *Forged log lines.* Covered by the two points above: the trusted journald fields decide, never the message text.
+- *The boot-time agent service.* The optional `atlas-resident` unit starts an AI with shell access at every boot, with
+  nobody watching: a standing privilege, limited only by the rights of the agent account and by the approval mode
+  in `resident.env` (`bypassPermissions` removes the human approval step). Its logins are files in that account's
+  home (see [resident.md](resident.md#logins-and-restarts)); an expired login stops the start and escalates.
 
 **Out of scope, with reasons**
 

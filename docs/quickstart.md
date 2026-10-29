@@ -419,36 +419,41 @@ If something goes wrong: no session in the list means the process is not running
   The systemd pattern below lets you set `SENTINEL_RESIDENT_UNIT` (see [docs/resident.md](resident.md), section 3).
 
 **Optional: start it at boot with systemd. This is not an official Claude Code feature.** It is a pattern that works
-on a reference host, using `screen` (`sudo apt-get install -y screen`). Risk: a service that starts an AI with shell
-access at boot, with nobody watching, is a standing privilege; the account's rights are what limits it. Give `ops`
-narrow sudo rights (see docs/resident.md), keep Atlas's escalation running, and be ready to stop it. Create
-`/etc/systemd/system/agent.service`:
+on a reference host, using `screen`. Risk: a service that starts an AI with shell access at boot, with nobody
+watching, is a standing privilege; the account's rights are what limits it. Give `ops` narrow sudo rights (see
+docs/resident.md), keep Atlas's escalation running, and be ready to stop it.
 
-```ini
-[Unit]
-Description=Claude resident session
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-User=ops
-WorkingDirectory=/home/ops/resident
-ExecStart=/usr/bin/screen -DmS claude /home/ops/.local/bin/claude --remote-control "atlas-server"
-Restart=on-failure
-RestartSec=30
-
-[Install]
-WantedBy=multi-user.target
-```
+Atlas ships the pieces: `examples/systemd/atlas-resident.service` (unit template), `examples/resident/resident.env`
+(settings) and `examples/resident/start-resident.sh` (checks the network and the logins, then starts the session).
+Install them from the checkout of step 2, with the same placeholders the installer fills in:
 
 ```bash
+sudo apt-get install -y screen
+sudo install -d -m 0755 /etc/atlas
+sudo install -m 0644 examples/resident/resident.env /etc/atlas/resident.env
+sudo nano /etc/atlas/resident.env      # check RESIDENT_DIR, RESIDENT_NAME and RESIDENT_CLAUDE (path of claude)
+sed -e "s|@ATLAS_CODE@|/opt/atlas|g" -e "s|@ATLAS_STATE@|/var/lib/atlas|g" -e "s|@RESIDENT_USER@|ops|g" \
+  examples/systemd/atlas-resident.service | sudo tee /etc/systemd/system/atlas-resident.service >/dev/null
 sudo systemctl daemon-reload
-sudo systemctl enable --now agent.service
-screen -ls          # as ops: a session named claude
+sudo systemctl enable --now atlas-resident.service
 ```
 
-Then set `SENTINEL_RESIDENT_UNIT=agent.service` in `sentinel.env`. After every start you still send the first
-message of step 7 (the Monitor is armed by the session, not by the service). Attach with `screen -r claude`.
+`RESIDENT_PERMISSION_MODE=default` keeps the human approval step; `bypassPermissions` removes it. Then set
+`SENTINEL_RESIDENT_UNIT=atlas-resident.service` in `/var/lib/atlas/sentinel.env`, so Atlas reports the resident dead
+when the unit fails. The service sends the first message of step 7 by itself (a generic version). Attach with
+`screen -r claude`.
+
+**Test it without a reboot.** Stop your manual session, then:
+
+```bash
+sudo systemctl start atlas-resident.service
+systemctl is-active atlas-resident.service     # active
+screen -ls                                     # as ops: a session named claude
+```
+
+The session appears in the Claude app under the name from `RESIDENT_NAME`. If the unit is `failed`, the script says
+why in `sudo journalctl -u atlas-resident.service -n 20`: most likely the login is gone (see
+[Logins and restarts](resident.md#logins-and-restarts)).
 
 ## 10. Test that the alarm path works
 
@@ -493,7 +498,7 @@ as above. Atlas is now tested end to end: detection, the AI woken, the human tol
 Stop and remove the resident first. As `ops`:
 
 ```bash
-tmux kill-session -t claude                 # or: sudo systemctl disable --now agent.service
+tmux kill-session -t claude                 # or: sudo systemctl disable --now atlas-resident.service
 ```
 
 Remove the `atlas-resident` plugin and the `atlas` marketplace from the `/plugin` menu inside a Claude Code session
@@ -511,4 +516,4 @@ sudo ./uninstall.sh
 This removes the units, the sudoers drop-in and the crontab lines. The state directory (`/var/lib/atlas`, baseline
 and logs) is kept; add `--purge` to delete it too. The code in `/opt/atlas` and the accounts stay: remove them by
 hand (`sudo rm -r /opt/atlas`, `sudo userdel atlas`) if you want. If you created the systemd unit, delete
-`/etc/systemd/system/agent.service`.
+`/etc/systemd/system/atlas-resident.service`.

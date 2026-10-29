@@ -62,8 +62,8 @@ expires, re-arm it; the sensor's own silence is not proof of health, which is wh
 In `/var/lib/atlas/sentinel.env`, one or both:
 
 ```
-SENTINEL_RESIDENT_UNIT=agent.service       # a systemd unit that runs the session
-SENTINEL_RESIDENT_SCREEN=agent             # or a screen session name
+SENTINEL_RESIDENT_UNIT=atlas-resident.service  # a systemd unit that runs the session
+SENTINEL_RESIDENT_SCREEN=claude            # or a screen session name
 SENTINEL_AGENT_SUDO_USERS=ops              # the account the agent works under uses sudo all day
 ```
 
@@ -107,31 +107,50 @@ scratch machine before this one.
 
 ## 4. Start the agent after a reboot (optional)
 
-A unit that starts the session in `screen`, so it comes back by itself and stays attachable:
+Atlas ships a unit template, a start script and a settings file, so the session comes back by itself in `screen`
+and stays attachable. This is not an official Claude Code feature; the exact install commands are in
+[quickstart.md](quickstart.md#9-keep-it-running):
 
-```ini
-# /etc/systemd/system/agent.service
-[Unit]
-Description=AI resident session
-After=network-online.target
-Wants=network-online.target
+- `examples/systemd/atlas-resident.service` - a system service (`User=<agent account>`; a user service would die at
+  logout), `Type=exec`, `Restart=on-failure`, at most 5 starts per hour.
+- `examples/resident/resident.env` - installed as `/etc/atlas/resident.env`: working directory, screen name,
+  Remote Control name, `RESIDENT_PERMISSION_MODE` (`default` keeps the human approval step; `bypassPermissions`
+  removes it), path of `claude`, optional extra login checks (`RESIDENT_AUTH_CHECKS="codex login status"`).
+- `examples/resident/start-resident.sh` - honours `RESIDENT-OFF`, refuses a second session, waits for the network,
+  checks the logins, writes `<state>/BOOT`, then starts a fresh session whose first prompt points the agent to
+  `AGENTS.md`, `BOOT` and `AFTER-REBOOT.md` and tells it to re-arm the session sensor. `--dry-run` prints what it
+  would do. Exit 3 = a login is missing.
 
-[Service]
-Type=forking
-User=ops
-WorkingDirectory=/home/ops
-ExecStart=/usr/bin/screen -dmS agent <your agent command>
-ExecStop=/usr/bin/screen -S agent -X quit
-Restart=on-failure
-RestartSec=30
+Risk: this starts an AI with shell access at boot, with nobody watching; the account's rights limit it. Then set
+`SENTINEL_RESIDENT_UNIT=atlas-resident.service` (step 3). Whatever starts the agent, it must re-arm the session
+sensor (step 2) at the start of every session. Until it is back, the router sends critical events to the human and
+escalation reports `resident-dead`.
 
-[Install]
-WantedBy=multi-user.target
-```
+## Logins and restarts
 
-`sudo systemctl enable --now agent.service`, then set `SENTINEL_RESIDENT_UNIT=agent.service` (step 3). Whatever
-starts the agent, it must re-arm the session sensor (step 2) at the start of every session. Until it is back, the
-router sends critical events to the human and escalation reports `resident-dead`.
+A restart must not log the agent out. Every login lives in a file in the agent account's home directory, which a
+reboot does not touch:
+
+| Provider | File | Check (exit 0 = logged in) |
+|---|---|---|
+| Claude Code | `~/.claude/.credentials.json` (mode 0600) | `claude auth status` |
+| Codex | `~/.codex/auth.json` | `codex login status` |
+| any other | must be a file in the agent account's home | its own status command, listed in `RESIDENT_AUTH_CHECKS` |
+
+Rules:
+
+- A login must never be an environment variable of an SSH shell or a file in `/tmp`: both are gone after a reboot.
+- Never copy a login into the Atlas state directory, the repository, or a backup that leaves the host.
+- An `ANTHROPIC_API_KEY` set in the environment overrides the subscription login (and Remote Control does not work
+  with API keys): keep it out of the unit and `resident.env`.
+- Remote Control needs the claude.ai login, not `claude setup-token`.
+
+When a login expires or is revoked, the start script refuses to start (exit 3, "agent not logged in"), the unit
+fails, and Atlas's escalation tells the human that the resident is dead (this needs
+`SENTINEL_RESIDENT_UNIT=atlas-resident.service` in `sentinel.env`). The human logs in once over SSH as the agent
+account (`claude auth login`: open the URL on your own computer and paste the code back; for Codex
+`codex login --device-auth`) and then runs `sudo systemctl restart atlas-resident`. After five failed starts within
+an hour systemd stops retrying; `systemctl reset-failed atlas-resident` clears that.
 
 ## 5. The agent's routine on a wake-up
 

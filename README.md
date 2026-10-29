@@ -138,7 +138,9 @@ with read-only tools). Step by step, in detail in [docs/resident.md](docs/reside
    re-arm it when it expires.
 3. Set `SENTINEL_RESIDENT_UNIT` and/or `SENTINEL_RESIDENT_SCREEN` in `sentinel.env`, so the router and escalation
    know whether the agent is present (absent agent = critical events go straight to the human).
-4. Optionally start the session from a systemd unit after a reboot (example in docs/resident.md).
+4. Optionally start the session from a systemd unit after a reboot (shipped template and start script, see
+   docs/resident.md). The agent's logins live in files in its home and survive the restart; when one has expired
+   the unit fails and Atlas tells you: [Logins and restarts](docs/resident.md#logins-and-restarts).
 5. On a wake-up the agent reads ALERT and the bus line, verifies by probing system state, fixes or blesses
    (`atlas.py bless`), acknowledges (`atlas.py ack`) and reports to you; anything unexplained stays
    unacknowledged so escalation still reaches you.
