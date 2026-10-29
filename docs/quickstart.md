@@ -124,6 +124,17 @@ ports, services, SSH keys, cron). From now on every difference from it is report
 server you have just set up yourself and trust; on a server that might already be compromised the baseline would
 bless the compromise. If you answer `n` you can do it later (below).
 
+To keep the first minutes quiet, the installer then does three more things:
+
+- **Your SSH address.** If you run it inside an SSH session it offers to add your client address to
+  `known-ips.txt` (it asks `y/N`; with `--yes` it adds it, with a dated comment). Without that, your own login would be
+  the first alarm. The address is checked (IPv4 or IPv6 only) before it is written. Outside SSH it prints how to add one.
+- **HTTP expectations.** With `--with-apache`, on a fresh state, it records today's first status code of each enabled
+  vhost in `http-expected.json` and prints them. Review that file: it holds what the sites answer now, which is not
+  necessarily what they should answer. An existing file is never overwritten.
+- **A first patrol.** It runs one patrol as the Atlas user, and only then starts the escalation timer, so escalation
+  does not mail "patrol missing" before the first heartbeat exists.
+
 Look at what Atlas saw, and accept it if it is right:
 
 ```bash
@@ -445,9 +456,15 @@ sudo systemctl enable --now atlas-resident.service
 **Choose the trust level before the enable line above.** Set `RESIDENT_PERMISSION_MODE` in `/etc/atlas/resident.env` to `default` (asks you before
 risky actions, answered from the Claude app), `acceptEdits`, `plan` or `bypassPermissions` (acts without asking; also
 needs `--allow-dangerously-skip-permissions` in `RESIDENT_EXTRA_ARGS`). It is empty on purpose: the service refuses to
-start until you choose (see [docs/resident.md](resident.md#choose-the-trust-level)). Then set
-`SENTINEL_RESIDENT_UNIT=atlas-resident.service` in `/var/lib/atlas/sentinel.env`, so Atlas reports the resident dead
-when the unit fails. The service sends the first message of step 7 by itself (a generic version). Attach with
+start until you choose (see [docs/resident.md](resident.md#choose-the-trust-level)). The installer does not set
+`SENTINEL_RESIDENT_UNIT` (the unit is not running yet, so Atlas would report the resident dead at once). After
+`systemctl enable --now atlas-resident.service` set it in `/var/lib/atlas/sentinel.env`, so Atlas reports the resident
+dead when the unit fails:
+
+```bash
+sudo sed -i 's|^SENTINEL_RESIDENT_UNIT=.*|SENTINEL_RESIDENT_UNIT=atlas-resident.service|' /var/lib/atlas/sentinel.env
+```
+ The service sends the first message of step 7 by itself (a generic version). Attach with
 `screen -r claude`.
 
 **Test it without a reboot.** Stop your manual session, then:

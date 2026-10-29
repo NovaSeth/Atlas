@@ -240,6 +240,11 @@ install_if_absent() {   # $1 source  $2 destination  $3 mode
     fi
 }
 install_if_absent "$REPO/examples/sentinel.env" "$STATE/sentinel.env" 0640
+is_example() {   # $1 file  $2 example: absent, or still the untouched example (a fresh state)
+    [ ! -e "$1" ] || cmp -s "$1" "$2"
+}
+is_example "$STATE/known-ips.txt" "$REPO/examples/known-ips.txt" && FRESH_IPS=1 || FRESH_IPS=0
+is_example "$STATE/http-expected.json" "$REPO/examples/http-expected.json" && FRESH_HTTP=1 || FRESH_HTTP=0
 install_if_absent "$REPO/examples/known-ips.txt" "$STATE/known-ips.txt" 0640
 install_if_absent "$REPO/examples/http-expected.json" "$STATE/http-expected.json" 0640
 install_if_absent "$REPO/atlas/pauses/README.md" "$STATE/pauses/README.md" 0640
@@ -283,7 +288,9 @@ for u in "${UNITS[@]}"; do
     run install -m 0644 "$TMP/$u" "$SYSTEMD_DIR/$u"
 done
 run systemctl daemon-reload
-run systemctl enable --now sentinel-stream.service sentinel-escalation.timer
+# The escalation timer is enabled in step 9, after the first patrol: before it there is no heartbeat yet and
+# escalation would mail "patrol missing" on a perfectly healthy fresh install.
+run systemctl enable --now sentinel-stream.service
 # an upgrade replaced the code under a running stream: restart it (a no-op when it is not running)
 run systemctl try-restart sentinel-stream.service
 
@@ -317,7 +324,8 @@ if [ -n "$RUSER" ]; then
     fi
     run install -m 0644 "$TMP/atlas-resident.service" "$SYSTEMD_DIR/atlas-resident.service"
     run systemctl daemon-reload
-    run sed -i "s|^SENTINEL_RESIDENT_UNIT=.*|SENTINEL_RESIDENT_UNIT=atlas-resident.service|" "$STATE/sentinel.env"
+    # SENTINEL_RESIDENT_UNIT is NOT set here: the unit is not started yet (the human logs in first), so Atlas would
+    # report "resident dead" at once. The final steps print the line to run after `systemctl enable --now`.
     if [ "$PMODE" = bypassPermissions ]; then
         warn "bypassPermissions: the AI resident will act WITHOUT asking, started at boot, unattended, with every" \
              "right the account $RUSER has. Only you can undo this choice: edit RESIDENT_PERMISSION_MODE."
@@ -395,6 +403,83 @@ else
     esac
 fi
 
+# --- 9b. First-run quiet: the operator's address, the vhosts' current answers, one patrol --------------
+# Without these the first patrol alarms for the operator's own login and for every vhost ("unknown expectation").
+valid_ip() {   # $1 candidate: IPv4 dotted quad (octets <= 255) or IPv6 hex/colons only
+    local ip=$1 o
+    if [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+        for o in ${ip//./ }; do [ "$((10#$o))" -le 255 ] || return 1; done
+        return 0
+    fi
+    [[ $ip =~ ^[0-9A-Fa-f:]+$ ]] && [[ $ip == *:*:* ]]
+}
+KNOWN_HOW="add your address: echo 'YOUR.IP.ADDRESS' | sudo tee -a $STATE/known-ips.txt"
+if [ "$FRESH_IPS" -ne 1 ]; then
+    say "keeping existing $STATE/known-ips.txt"
+elif [ -n "${SSH_CONNECTION:-}" ]; then
+    CLIENT_IP=${SSH_CONNECTION%% *}
+    if ! valid_ip "$CLIENT_IP"; then
+        warn "the SSH client address is not a valid IP address; known-ips.txt left alone"
+        say "$KNOWN_HOW"
+    else
+        add=0
+        if [ "$YES" -eq 1 ]; then add=1
+        elif [ -t 0 ] && [ "$DRY" -eq 0 ]; then
+            read -r -p "Add your SSH address $CLIENT_IP to known-ips.txt (no alarm for your own logins)? [y/N] " answer
+            case $answer in [yY]*) add=1 ;; esac
+        fi
+        if [ "$add" -eq 1 ]; then
+            say "known-ips.txt: adding the operator address $CLIENT_IP"
+            # shellcheck disable=SC2016  # the $1..$3 belong to the inner sh
+            as_user sh -c 'printf "# %s\n%s\n" "$1" "$2" >> "$3"' sh \
+                "operator address added by the installer $(date +%F)" "$CLIENT_IP" "$STATE/known-ips.txt"
+        else
+            say "not added. $KNOWN_HOW   (until then your own SSH login alarms)"
+        fi
+    fi
+else
+    say "no SSH session detected. $KNOWN_HOW   (until then your own SSH login alarms)"
+fi
+
+SITES_DIR=${HTTP_SITES_DIR:-/etc/apache2/sites-enabled}
+LEARN_PY=$(cat <<'PY'
+import json
+import sys
+
+sys.path.insert(0, sys.argv[1] + "/atlas/sensors")
+import http_probes as h
+
+learned = {}
+for name in h.vhosts():
+    try:
+        learned[name] = [h.fetch("https://%s/" % name)]
+    except h.FetchError as e:
+        print("skipped %s: %s" % (name, e))
+if not learned:
+    print("no vhost answered: the example http-expected.json stays")
+    sys.exit(0)
+data = {"_extra_urls_cmd": ""}
+data.update(learned)
+with open(sys.argv[2], "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+for name, codes in learned.items():
+    print("recorded %s -> %s" % (name, codes))
+PY
+)
+if [ "$FRESH_HTTP" -ne 1 ]; then
+    say "keeping existing $STATE/http-expected.json"
+elif [ "$APACHE" -eq 1 ] && grep -rqsi '^[[:space:]]*ServerName' "$SITES_DIR" 2>/dev/null; then
+    say "http-expected.json: recording the current first status code of each enabled vhost"
+    as_user "HTTP_SITES_DIR=$SITES_DIR" python3 -I -c "$LEARN_PY" "$CODE" "$STATE/http-expected.json" || \
+        warn "could not record the vhost answers; the example http-expected.json stays"
+    say "REVIEW $STATE/http-expected.json: these are today's answers, not necessarily the right ones"
+fi
+
+say "first patrol (so the heartbeat exists before the escalation timer starts)"
+as_user "$CODE/atlas/patrol.sh" || warn "the first patrol reported a problem; read $STATE/ALERT"
+run systemctl enable --now sentinel-escalation.timer
+
 if [ ! -e "$STATE/sentinel.env" ] || ! grep -qE '^SENTINEL_EMAIL=.+' "$STATE/sentinel.env" 2>/dev/null; then
     say "NEXT: set SENTINEL_EMAIL in $STATE/sentinel.env - until then escalation reports UNKNOWN (no recipient)"
 fi
@@ -403,6 +488,8 @@ if [ -n "$RUSER" ]; then
     say "    1. claude auth login          (open the URL on your own computer, paste the code back)"
     say "    2. cd to RESIDENT_DIR in $ETC_DIR/resident.env, run claude once, answer the trust and Remote Control prompts"
     say "    3. sudo systemctl enable --now atlas-resident"
+    say "    4. then tell Atlas the unit exists (otherwise it never reports the resident dead):"
+    say "       sudo sed -i 's|^SENTINEL_RESIDENT_UNIT=.*|SENTINEL_RESIDENT_UNIT=atlas-resident.service|' $STATE/sentinel.env"
     say "    (screen must be installed: sudo apt-get install -y screen; details in docs/quickstart.md step 9)"
 else
     say "AI resident (optional): not set up. To start an AI session at boot you must choose its trust level:"

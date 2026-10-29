@@ -80,7 +80,9 @@ class InstallResident(unittest.TestCase):
         self.assertNotIn("/ho" + "me/ops-test", out)
         self.assertNotRegex(out, r"@[A-Z_]+@")
         self.assertNotIn("--allow-dangerously-skip-permissions", out)
-        self.assertIn("SENTINEL_RESIDENT_UNIT=atlas-resident.service", out)
+        self.assertNotRegex(
+            out, r"\[dry-run\].*sed.*SENTINEL_RESIDENT_UNIT"
+        )  # set after the enable step (first_run tests)
         # never enabled or started by the installer
         self.assertNotRegex(out, r"\[dry-run\].*(enable|start).*atlas-resident")
         self.assertIn("claude auth login", out)
