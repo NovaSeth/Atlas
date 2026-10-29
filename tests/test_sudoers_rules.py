@@ -44,7 +44,7 @@ class AuthorizedKeysRules(unittest.TestCase):
         for pat in ak_patterns():
             flag = pat.split()[0].lstrip("^")
             for good in ("/home/ops/.ssh/authorized_keys", "/root/.ssh/authorized_keys",
-                         "/var/lib/git-user/.ssh/authorized_keys", "/home/a.b/.ssh/authorized_keys"):
+                         "/var/lib/git-user/.ssh/authorized_keys", "/srv/a.b/.ssh/authorized_keys"):
                 self.assertIsNotNone(re.fullmatch(pat, "%s %s" % (flag, good)), (pat, good))
 
     def test_no_class_mixes_dot_and_slash(self):
