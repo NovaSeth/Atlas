@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Example contract: an hourly job that writes exactly one line per run, "<timestamp> <OUTCOME>",
 # for example "2026-01-01T10:17:00 OK pushed", "... SKIPPED busy" or "... FAILED <reason>".
 # Copy to $SENTINEL_ATLAS/jobs.d/ and adapt. Sourced by atlas/jobs.sh, which provides the helpers.

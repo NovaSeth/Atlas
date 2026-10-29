@@ -23,9 +23,10 @@
 # Exit contract (same as every sensor): 0 clean (no output), 1 problems (one line each on stdout),
 # 2 cannot judge (stderr says why). Messages come from the i18n catalog (SENTINEL_LANG).
 # Test overrides: JOBS_PAUSE_DIR (pause directory), JOBS_D (contract directory).
+# shellcheck disable=SC2317  # the job functions below are called by name from the contract files
 set -uo pipefail
 JOBS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=lib.sh
+# shellcheck source-path=SCRIPTDIR source=lib.sh
 . "$JOBS_DIR/lib.sh"
 STATE=${SENTINEL_ATLAS:-$JOBS_DIR}
 atlas_load_env "$STATE"

@@ -20,7 +20,7 @@ STATE=${SENTINEL_ATLAS:-$CODE}
 mkdir -p "$STATE" || exit 1
 cd "$STATE" || exit 1
 export SENTINEL_ATLAS="$STATE"
-# shellcheck source=lib.sh
+# shellcheck source-path=SCRIPTDIR source=lib.sh
 . "$CODE/lib.sh"
 atlas_load_env "$STATE"     # $STATE/sentinel.env; variables already in the environment win
 
@@ -51,7 +51,7 @@ SEC_BODIES=()
 REPORTS=""
 if [ -d "$STATE/bridges.d" ]; then
     for bridge in "$STATE"/bridges.d/*; do
-        [ -f "$bridge" ] && [ -x "$bridge" ] || continue
+        if [ ! -f "$bridge" ] || [ ! -x "$bridge" ]; then continue; fi
         bname=${bridge##*/}; bname=${bname%.*}
         out=$(timeout "$T_REPORT" "$bridge" 2>/dev/null)
         [ -n "$out" ] || continue

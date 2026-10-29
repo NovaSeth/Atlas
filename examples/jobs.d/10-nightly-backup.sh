@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Example contract: a nightly job that appends to its own log (log-freshness contract).
 # Copy to $SENTINEL_ATLAS/jobs.d/ and adapt. Sourced by atlas/jobs.sh, which provides the helpers.
 #
