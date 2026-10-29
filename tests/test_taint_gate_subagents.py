@@ -17,7 +17,7 @@ PRIVILEGED = [
     ("Monitor", {"command": "tail -f /tmp/ci.log"}), ("mcp__chat__send_message", {"text": "x"}),
 ]
 READ_ONLY = [("Read", {"file_path": "/home/tester/project/README.md"}), ("Grep", {"pattern": "x", "path": "/tmp"}),
-             ("Bash", {"command": "ls /"}), ("Bash", {"command": "git status"}),
+             ("Bash", {"command": "ls /"}), ("Bash", {"command": "uptime"}),
              ("Agent", {"subagent_type": "log-reader", "prompt": "x"})]
 
 
