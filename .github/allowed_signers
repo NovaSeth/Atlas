@@ -1,2 +1,3 @@
 # Add authorized release signers before publishing signed tags.
 # <principal> namespaces="git" ssh-ed25519 <key>
+noreply@example.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAesW/niBZZHNbnzSHPM61ovhrWgj3H90WCJ0uU5iZEs Atlas release signing
