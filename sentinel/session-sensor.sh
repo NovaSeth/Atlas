@@ -17,7 +17,7 @@ ATLAS=${SENTINEL_ATLAS:-$SDIR/../atlas}
 # shellcheck source=../atlas/lib.sh
 . "$SDIR/../atlas/lib.sh"
 atlas_load_env "$ATLAS"
-ESCALATION_LOG=${SENTINEL_ESCALATION_LOG:-/var/tmp/sentinel/escalation.log}
+ESCALATION_LOG=${SENTINEL_ESCALATION_LOG:-${SENTINEL_STATE:-$ATLAS/runtime}/escalation.log}
 # Interval overridable ONLY for tests; 120 s in production.
 INTERVAL=${SENTINEL_INTERVAL:-120}
 # Real-time bus events: `bus.py follow` runs as a child of this script and writes

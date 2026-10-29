@@ -479,7 +479,11 @@ def main():
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
     state = router.state_dir()
-    state.mkdir(parents=True, exist_ok=True)
+    try:
+        bus.ensure_private_dir(state)
+    except bus.UnsafeStateDir as e:
+        print("sentinel-stream: unsafe runtime directory %s (%s)" % (state, e.code), file=sys.stderr, flush=True)
+        return 3
     heartbeat = state / "stream.heartbeat"
     hb_secs = _env_num("SENTINEL_HEARTBEAT_SECS", DEFAULT_HEARTBEAT_SECS)
     wd_secs = _env_num("SENTINEL_WATCHDOG_SECS", DEFAULT_WATCHDOG_SECS)

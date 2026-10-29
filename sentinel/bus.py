@@ -12,6 +12,7 @@ import fcntl
 import json
 import os
 import re
+import stat
 import sys
 import time
 from datetime import datetime, timezone
@@ -38,6 +39,46 @@ _TS_PATTERNS = [
 
 def atlas_dir():
     return Path(os.environ.get("SENTINEL_ATLAS") or Path(__file__).resolve().parent.parent / "atlas")
+
+
+def runtime_dir():
+    """Runtime state (stream heartbeat, router dedup, escalation log, notifier outbox)."""
+    return Path(os.environ.get("SENTINEL_STATE_DIR") or atlas_dir() / "runtime")
+
+
+class UnsafeStateDir(Exception):
+    """The runtime directory cannot be trusted; `.code` says why."""
+
+    def __init__(self, code, path):
+        super().__init__("%s: %s" % (path, code))
+        self.code = code
+        self.path = str(path)
+
+
+def ensure_private_dir(path):
+    """Return `path` as a directory owned by this user, not a symlink and not group/other-writable.
+    A missing directory is created 0750 (its parent must exist). Anything else raises UnsafeStateDir."""
+    path = Path(path)
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        try:
+            os.mkdir(path, 0o750)
+            os.chmod(path, 0o750)
+        except OSError as e:
+            raise UnsafeStateDir("cannot-create", path) from e
+        st = os.lstat(path)
+    except OSError as e:
+        raise UnsafeStateDir("cannot-create", path) from e
+    if stat.S_ISLNK(st.st_mode):
+        raise UnsafeStateDir("symlink", path)
+    if not stat.S_ISDIR(st.st_mode):
+        raise UnsafeStateDir("not-a-directory", path)
+    if st.st_uid != os.geteuid():
+        raise UnsafeStateDir("foreign-owner", path)
+    if st.st_mode & 0o022:
+        raise UnsafeStateDir("group-or-other-writable", path)
+    return path
 
 
 def bus_path():
