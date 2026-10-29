@@ -157,7 +157,9 @@ else
 fi
 
 # --- 3. An alarm stands and the resident has not acknowledged it ---
-# This is the heart of it: an alarm with no recipient. Acknowledge with `touch ALERT.acked`.
+# This is the heart of it: an alarm with no recipient. Acknowledge with `atlas.py ack`, which writes the
+# sha256 of the ALERT content into ALERT.acked and tells the human. A bare `touch ALERT.acked` still counts
+# as an acknowledgement (never lock the resident out), but is noticed once per ALERT content.
 if [ -f "$ATLAS/ALERT" ]; then
     # Age = time since the alert FIRST appeared in this continuous episode (ALERT.since, written
     # by the patrol when ALERT is created from nothing, removed with ALERT). The mtime of ALERT
@@ -172,6 +174,33 @@ if [ -f "$ATLAS/ALERT" ]; then
     if [ "$alert_age" -gt "$MAX_ALERT_AGE" ] && [ "$acked" -eq 0 ]; then
         add_problem alert-unacked "$(t esc.alert_unacked age="$alert_age" body="$(cat "$ATLAS/ALERT" 2>/dev/null)")"
     fi
+    if [ "$acked" -eq 1 ]; then
+        # Same bytes as atlas.py alert_sha: everything after the first line (the timestamp).
+        alert_sha=$(tail -n +2 "$ATLAS/ALERT" 2>/dev/null | sha256sum | cut -c1-64)
+        acked_sha=$(head -c 64 "$ATLAS/ALERT.acked" 2>/dev/null)
+        ack_marker="$STATE/notice-ack-${alert_sha:0:16}"
+        if [ "$acked_sha" != "$alert_sha" ] && [ ! -e "$ack_marker" ]; then
+            ack_sections=$(grep -E '^== .+ ==$' "$ATLAS/ALERT" 2>/dev/null | sed -e 's/^== //' -e 's/ ==$//' \
+                | head -n 20 | paste -sd, - | cut -c1-400)
+            ack_subject=$(t esc.ack_unrecorded_subject)
+            ack_body=$(t esc.ack_unrecorded sha256="$alert_sha" sections="${ack_sections:--}")
+            ack_sent=0
+            if [ -n "$HUMAN" ] && printf '%s\n' "$ack_body" | mail -s "$ack_subject" "$HUMAN"; then ack_sent=1; fi
+            if [ -n "$NOTIFY_CMD" ]; then
+                read -r -a ack_cmd <<< "$NOTIFY_CMD"
+                SENTINEL_EMAIL="$HUMAN" timeout 45 "${ack_cmd[@]}" "$ack_subject" "$ack_body" >/dev/null 2>&1 && ack_sent=1
+            fi
+            if [ "$ack_sent" -eq 1 ]; then
+                touch "$ack_marker"
+                heartbeat "notice: ack-unrecorded"
+            else
+                heartbeat "notice: ack-unrecorded not delivered (retried next run)"
+            fi
+        fi
+    fi
+else
+    # No ALERT: the per-content notice markers have served their episode.
+    rm -f "$STATE"/notice-ack-*
 fi
 
 # --- 4. Is the real-time stream daemon alive ---
