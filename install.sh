@@ -51,6 +51,16 @@ while [ $# -gt 0 ]; do
         *) echo "install.sh: unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
 done
+# Both paths are substituted into sed expressions, unit files, sudoers and cron lines: anything outside a
+# plain path alphabet (space, | & % backslash, newline ...) would break the rendering or inject. Before any action.
+valid_path() {   # $1 value
+    [[ $1 =~ ^[A-Za-z0-9._/@+-]+$ ]]
+}
+if ! valid_path "$CODE" || ! valid_path "$STATE"; then
+    echo "install.sh: --code/--state may contain only letters, digits and . _ / @ + -" >&2; exit 2
+fi
+[[ $AUSER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || {
+    echo 'install.sh: --user must match ^[a-z_][a-z0-9_-]{0,31}$' >&2; exit 2; }
 case $CODE in /*) ;; *) echo "install.sh: --code must be an absolute path" >&2; exit 2 ;; esac
 case $STATE in /*) ;; *) echo "install.sh: --state must be an absolute path" >&2; exit 2 ;; esac
 CODE=${CODE%/}; STATE=${STATE%/}
