@@ -9,7 +9,7 @@ Rule, for every function, class and method in test files (`*/tests/*.py`, `tests
   * AST changed AND the diff removes >= 1 line inside the
     old line range of the definition (a class counts only
     its own lines, not those of its methods)              -> weakened
-Entries in allowed-test-edits.txt (`path::qualname  # P-id`) are skipped. Exit 2 on a usage or git error.
+Entries in allowed-test-edits.txt (`path::qualname  # P-id`) are skipped. Exit 2 (message on stderr) on a usage, git or parse error.
 """
 import argparse
 import ast
@@ -61,7 +61,11 @@ def definitions(source, path):
             else:
                 out[qual] = (ast.dump(node), [(first, node.end_lineno)])
 
-    walk(ast.parse(source, path).body, "")
+    try:
+        tree = ast.parse(source, path)
+    except SyntaxError as exc:
+        raise SystemExit("inventory: %s does not parse: %s" % (path, exc))
+    walk(tree.body, "")
     return out
 
 
