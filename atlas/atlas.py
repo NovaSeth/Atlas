@@ -59,11 +59,15 @@ _PUNCTUATION = frozenset("();<>|&")
 
 def argv_of(cmd):
     """Split `cmd` into an argv list. ValueError on a shell operator, a substitution or a broken quote."""
+    if "$(" in cmd:
+        raise ValueError("shell syntax: command substitution")
     lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
     argv = list(lex)
     for tok in argv:
-        if tok in SHELL_OPERATORS or all(c in _PUNCTUATION for c in tok) or tok.startswith(("$(", "`")):
+        # a lone ( or ) is an ordinary find(1) argument; a substitution is refused by the `$(` check below
+        punct = all(c in _PUNCTUATION for c in tok) and tok not in ("(", ")")
+        if tok in SHELL_OPERATORS or punct or tok.startswith("`"):
             raise ValueError("shell syntax: %r" % tok)
     if not argv:
         raise ValueError("empty command")
@@ -542,7 +546,9 @@ def unit_hashes(errors=None):
     for d in UNIT_DIRS:
         if not probe("sensitive_files", f"sudo test -d {shlex.quote(d)}", errors):
             continue
-        out = measure("sensitive_files", f"sudo find {shlex.quote(d)} -maxdepth 2 -type f", errors=errors) or ""
+        # the argument list sudoers pins (examples/sudoers.d/atlas); the suffix filter below is a second guard
+        out = measure("sensitive_files", f"sudo find {shlex.quote(d)} -maxdepth 2 -type f \\( -name '*.service' "
+                      "-o -name '*.timer' -o -name '*.socket' -o -name '*.path' \\)", errors=errors) or ""
         for f in sorted(x for x in out.split() if x.endswith(UNIT_SUFFIXES)):
             h = sensitive_hash(f, errors)
             if h:
