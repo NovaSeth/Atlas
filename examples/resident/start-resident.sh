@@ -21,7 +21,7 @@ if [ ! -r "$ENV_FILE" ]; then
     log "env file $ENV_FILE not readable"
     exit 2
 fi
-# The file is sourced as shell code and sets the trust level (RESIDENT_PERMISSION_MODE, RESIDENT_EXTRA_ARGS): the
+# The file is parsed (never executed) and sets the trust level (RESIDENT_PERMISSION_MODE, RESIDENT_EXTRA_ARGS): the
 # agent account must never be able to raise its own trust level. So only a regular file owned by the trusted uid
 # (root, 0) that nobody else can write is accepted. RESIDENT_ENV_TRUSTED_UID is read from this script's own
 # environment BEFORE anything is sourced, so the env file cannot change it; it is set only by a test harness,
@@ -37,8 +37,35 @@ if [ "$env_uid" != "${RESIDENT_ENV_TRUSTED_UID:-0}" ] || [ $((8#$env_mode & 8#02
 fi
 # A SENTINEL_ATLAS from the unit wins over the one in the env file.
 unit_atlas="${SENTINEL_ATLAS:-}"
-# shellcheck disable=SC1090
-. "$ENV_FILE"
+# The env file is PARSED, never executed: one KEY=VALUE per line, a known key, and a value that is either a bare
+# word or a "double-quoted string" without $, backtick, backslash or inner quote. Anything else is refused.
+env_bad() {
+    log "env file $ENV_FILE line $1: $2"
+    exit 2
+}
+lineno=0
+while IFS= read -r line || [ -n "$line" ]; do
+    lineno=$((lineno + 1))
+    line="${line%"${line##*[![:space:]]}"}"
+    line="${line#"${line%%[![:space:]]*}"}"
+    case "$line" in '' | '#'*) continue ;; esac
+    if [[ ! $line =~ ^([A-Z_][A-Z0-9_]*)=(.*)$ ]]; then
+        env_bad "$lineno" "not a KEY=VALUE line (quote values with spaces: KEY=\"a b\")"
+    fi
+    key="${BASH_REMATCH[1]}"
+    val="${BASH_REMATCH[2]}"
+    case "$key" in
+    RESIDENT_DIR | RESIDENT_SESSION | RESIDENT_NAME | RESIDENT_PERMISSION_MODE | RESIDENT_CLAUDE | SENTINEL_ATLAS | ATLAS_CODE | RESIDENT_EXTRA_ARGS | RESIDENT_AUTH_CHECKS) ;;
+    *) env_bad "$lineno" "unknown key $key" ;;
+    esac
+    if [[ $val =~ ^\"([^\"\$\`\\]*)\"$ ]]; then
+        val="${BASH_REMATCH[1]}"
+    elif [[ ! $val =~ ^[^[:space:]\$\`\\\;\|\&\<\>\(\)\"\']*$ ]]; then
+        env_bad "$lineno" "value of $key is not a bare word or a plain double-quoted string (quote values with spaces: $key=\"a b\"; no \$, backtick, backslash, ; | & < > ( ) or inner quotes)"
+    fi
+    case "$key" in RESIDENT_DIR | RESIDENT_CLAUDE) [[ $val == \~/* ]] && val="$HOME/${val#\~/}" ;; esac
+    printf -v "$key" '%s' "$val"
+done <"$ENV_FILE"
 [ -n "$unit_atlas" ] && SENTINEL_ATLAS="$unit_atlas"
 
 RESIDENT_SESSION="${RESIDENT_SESSION:-claude}"
