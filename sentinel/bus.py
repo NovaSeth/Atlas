@@ -12,6 +12,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -343,14 +344,16 @@ class WakeLimiter:
         self.admitted = 0
         self.suppressed = 0
         self.first = ""
+        self.summary_sent = False   # a summary for this window was already shown (replay or follower)
         self._closed = None
 
     def _close_if_over(self):
         now = self.clock()
         if self.start is not None and now - self.start >= self.window:
-            if self.suppressed:
+            if self.suppressed and not self.summary_sent:
                 self._closed = (self.suppressed, self.first)
             self.start, self.admitted, self.suppressed, self.first = None, 0, 0, ""
+            self.summary_sent = False
         return now
 
     def admit(self, sensor):
@@ -390,6 +393,7 @@ class SharedWakeBudget:
         self.problem = ""        # set once when the state is unusable; the caller prints it
         self._reported = False
         self._mem = None        # in-memory fallback state while the file is unusable
+        self.deadline = None    # when the window this process last saw closes; None = nothing to wait for
 
     def take_problem(self):
         if self.problem and not self._reported:
@@ -397,24 +401,48 @@ class SharedWakeBudget:
             return self.problem
         return ""
 
+    @staticmethod
+    def _int(v, lo, hi):
+        if isinstance(v, bool) or not isinstance(v, int) or not lo <= v <= hi:
+            raise ValueError("bad number")
+        return v
+
     def _limiter(self, st):
         lim = WakeLimiter(self.max, self.window, clock=self.clock)
-        lim.start, lim.admitted = st.get("start"), int(st.get("count", 0))
-        lim.suppressed, lim.first = int(st.get("suppressed", 0)), str(st.get("first", ""))
+        start = st.get("start")
+        if start is not None:
+            if isinstance(start, bool) or not isinstance(start, (int, float)) or not math.isfinite(start) \
+                    or start > self.clock() + 3600:
+                raise ValueError("bad start")
+        lim.start = start
+        lim.admitted = self._int(st.get("count", 0), 0, max(self.max, 1) * 10)
+        lim.suppressed = self._int(st.get("suppressed", 0), 0, 10 ** 9)
+        first = st.get("first", "")
+        if not isinstance(first, str) or len(first) > 64:
+            raise ValueError("bad first")
+        lim.first = first
+        sent = st.get("summary_sent", False)
+        if not isinstance(sent, bool):
+            raise ValueError("bad flag")
+        lim.summary_sent = sent
         c = st.get("closed")
-        lim._closed = (int(c[0]), str(c[1])) if c else None
+        if c is not None:
+            if not isinstance(c, list) or len(c) != 2 or not isinstance(c[1], str) or len(c[1]) > 64:
+                raise ValueError("bad closed")
+            lim._closed = (self._int(c[0], 0, 10 ** 9), c[1])
         return lim
 
     @staticmethod
     def _dump(lim):
         return {"start": lim.start, "count": lim.admitted, "suppressed": lim.suppressed, "first": lim.first,
-                "closed": list(lim._closed) if lim._closed else None}
+                "summary_sent": lim.summary_sent, "closed": list(lim._closed) if lim._closed else None}
 
     def _exhausted(self, why):
         if not self.problem:
             self.problem = why
         if self._mem is None:
-            self._mem = {"start": self.clock(), "count": self.max, "suppressed": 0, "first": "", "closed": None}
+            self._mem = {"start": self.clock(), "count": self.max, "suppressed": 0, "first": "",
+                         "summary_sent": False, "closed": None}
         return self._mem
 
     def _run(self, op):
@@ -428,26 +456,48 @@ class SharedWakeBudget:
                         raise ValueError("not an object")
                     lim = self._limiter(st)
                 except FileNotFoundError:
-                    lim = self._limiter(self._mem or {})
-                except (OSError, ValueError, TypeError, IndexError) as e:
+                    st = self._mem or {}
+                    lim = self._limiter(st)
+                except (OSError, ValueError, TypeError, IndexError, OverflowError) as e:
+                    st = None  # rewritten below as an exhausted hour
                     lim = self._limiter(self._exhausted("wake budget state unreadable (%s)" % type(e).__name__))
                 result = op(lim)
-                tmp = self.dir / "wake-budget.json.tmp"
-                tmp.write_text(json.dumps(self._dump(lim)))
-                os.replace(tmp, self.dir / "wake-budget.json")
+                new = self._dump(lim)
+                self._remember(lim)
+                if new != st:  # never rewrite what did not change
+                    tmp = self.dir / "wake-budget.json.tmp"
+                    tmp.write_text(json.dumps(new))
+                    os.replace(tmp, self.dir / "wake-budget.json")
                 self._mem = None
                 return result
         except (OSError, UnsafeStateDir) as e:
             lim = self._limiter(self._exhausted("wake budget state unusable (%s)" % getattr(e, "code", type(e).__name__)))
             result = op(lim)
             self._mem = self._dump(lim)
+            self._remember(lim)
             return result
+
+    def _remember(self, lim):
+        self.deadline = lim.start + self.window if lim.start is not None else None
 
     def admit(self, sensor):
         return self._run(lambda lim: lim.admit(sensor))
 
     def roll(self):
+        """The closed-window summary (count, first sensor) when one is due, else None. Idle polls cost
+        nothing: the shared state is read only once the window this process saw has run out."""
+        if self.deadline is None or self.clock() < self.deadline:
+            return None
         return self._run(lambda lim: lim.roll())
+
+    def claim_summary(self):
+        """True for exactly one caller per window with suppressed events (the one who may print the summary)."""
+        def op(lim):
+            if lim.suppressed and not lim.summary_sent:
+                lim.summary_sent = True
+                return True
+            return False
+        return self._run(op)
 
 
 def cmd_follow(args):
@@ -536,7 +586,7 @@ def cmd_replay(args):
               "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), problem, limit), flush=True)
     if state_failure:
         print("ATLAS SENSOR: replay state not saved (%s); events may repeat" % state_failure, flush=True)
-    if suppressed:
+    if suppressed and limiter.claim_summary():
         print("%s ALERT sentinel.wake-limit: %d more event(s) not shown (limit %d/h), see events.jsonl "
               "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), suppressed, limit),
               flush=True)
