@@ -51,7 +51,7 @@ record, newest first, the last 200 lines are probed for shape):
   another way or the session stays restricted. It never clears taint on a guess.
 - **A field renamed or retyped** (`promptSource`, `delivery_id`, `humanTurn`, `promptId`): the record no longer
   proves a human origin, the prompt is treated as unverified and the taint stays.
-  **Fail closed:** a `type: user` record whose `origin` is null, or an object with no string `kind`, or a `kind` other
+  **Fail closed:** a `type: user` record whose `origin` is an explicit null, or an object with no string `kind`, or a `kind` other
   than `human`, is not human and the taint stays; a record with no `origin` key at all is still accepted. A queued
   message (`queued_command`) is stricter: it needs `origin.kind` equal to `human` and `humanTurn` true.
 - **A hook input field missing.** Without `prompt_id` the prompt is treated as unverified. Without `agent_id` the call

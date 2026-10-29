@@ -125,6 +125,10 @@ language setting. Everything inside a section comes from the message catalog (`i
 The patrol also runs every executable `bridges.d/*` (report bridges, see configuration). It never changes the
 baseline: only `atlas.py bless` does, run deliberately by a human or the resident after a change is understood.
 
+The `services.running` list leaves out `user@<uid>.service` (uid 0 to 4294967294), the per-login systemd user manager that
+starts at a user's first login and stops at the last logout; otherwise every SSH session would show as drift. A
+baseline recorded before this rule that still lists the unit does not drift: `check` ignores it on both sides.
+
 ### The sensor contract
 
 Every sensor obeys all of this; code that does not is a script that sometimes says something, not a sensor.
@@ -223,8 +227,9 @@ What Atlas does (`sentinel/untrusted.py`, stdlib):
   sensor, including a sensor name nobody has listed, appears as `<sensor>: untrusted text not shown, see the bus
   [<sensor>#<digest>]`. A new sensor is therefore redacted until it is added to the list on purpose.
 - **Wake budget.** At most `SENTINEL_WAKE_MAX_PER_HOUR` (default 12, 0 = no limit) lines an hour reach the agent;
-  when an hour closes with suppressed events the sensor prints one summary line, and the router tells the human
-  once and puts a `sentinel.wake-limit` warning on the bus. An attacker who floods the logs can therefore neither
+  the summary of a window with suppressed events is printed once, after the window closes, by the first session-sensor
+  process that runs then (the follower or a replay, also a freshly started one). The router tells the human once and
+  puts a `sentinel.wake-limit` warning on the bus. An attacker who floods the logs can therefore neither
   run up the agent's cost without bound nor hide behind the flood: the bus keeps every event.
 - **Sudo sender check.** A `sudo` line in the journal is trusted only when the entry's `_EXE` (or, when the journal
   gives none, `_COMM` equal to `sudo`) and `_UID` match the sender it claims: `_EXE` must be one of
