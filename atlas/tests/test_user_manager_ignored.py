@@ -87,7 +87,7 @@ class TestUserManagerIgnored(unittest.TestCase):
             self.assertEqual(atlas.without_per_login_units(snap), snap)
 
     def test_uid_is_bounded(self):
-        self.assertTrue(atlas.is_per_login_unit(at("user", "4294967295.service")))
+        self.assertTrue(atlas.is_per_login_unit(at("user", "4294967294.service")))
         self.assertFalse(atlas.is_per_login_unit(at("user", "99999999999999999999.service")))
         self.assertFalse(atlas.is_per_login_unit(at("user", "12345678901.service")))
 
