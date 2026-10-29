@@ -713,8 +713,12 @@ def audit_event(sensor, what, evidence):
 
 
 def tell_human(subject, body, kind):
-    with state_env():
-        status = notify.send_or_queue(subject, body, kind)
+    try:
+        with state_env():
+            status = notify.send_or_queue(subject, body, kind)
+    except Exception as e:  # noqa: BLE001 - the decision is already recorded; a notice problem is reported, not raised
+        print("atlas: notice failed (%s): %s" % (kind, e), file=sys.stderr)
+        status = "lost"
     if status != "sent":
         print(t("atlas.notify_not_sent", status=status), file=sys.stderr)
     return status
