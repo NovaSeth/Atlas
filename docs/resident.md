@@ -141,6 +141,30 @@ Risk: this starts an AI with shell access at boot, with nobody watching; the acc
 sensor (step 2) at the start of every session. Until it is back, the router sends critical events to the human and
 escalation reports `resident-dead`.
 
+## Model and effort
+
+The resident always starts with the model and effort you choose, not whatever the account defaults to. Both live in
+`/etc/atlas/resident.env` (root-owned, like the trust level) and are passed to `claude` as `--model` and `--effort`,
+right after `--permission-mode`:
+
+- `RESIDENT_MODEL` - a Claude Code model id or an alias the CLI accepts: `claude-opus-5-5`, `claude-sonnet-5-5`,
+  `claude-fable-5-1`, `opus`, `sonnet`. Allowed form: `^[a-z0-9][a-z0-9.[]-]{1,63}$`. A wrong id stops the session at
+  start, so check it once by hand: `claude --model <id> -p ok`.
+- `RESIDENT_EFFORT` - one of `low`, `medium`, `high`, `xhigh`, `max`.
+
+Both empty (the default) means the account's defaults. An invalid value makes the start script exit 2 and name the key.
+
+```
+RESIDENT_MODEL="claude-opus-5-5"
+RESIDENT_EFFORT="high"
+```
+
+At install time: `sudo ./install.sh --resident-user NAME --permission-mode MODE --model claude-opus-5-5 --effort high`.
+An upgrade run keeps an existing `resident.env` and prints the values it holds.
+
+To change them later, edit the two lines as root, then `sudo systemctl restart atlas-resident`. Restarting ends the
+current session: the resident starts fresh with the new model and effort.
+
 ## Logins and restarts
 
 A restart must not log the agent out. Every login lives in a file in the agent account's home directory, which a

@@ -456,7 +456,9 @@ sudo systemctl enable --now atlas-resident.service
 **Choose the trust level before the enable line above.** Set `RESIDENT_PERMISSION_MODE` in `/etc/atlas/resident.env` to `default` (asks you before
 risky actions, answered from the Claude app), `acceptEdits`, `plan` or `bypassPermissions` (acts without asking; also
 needs `--allow-dangerously-skip-permissions` in `RESIDENT_EXTRA_ARGS`). It is empty on purpose: the service refuses to
-start until you choose (see [docs/resident.md](resident.md#choose-the-trust-level)). The installer does not set
+start until you choose (see [docs/resident.md](resident.md#choose-the-trust-level)). Next to the trust level you can fix the model and effort the resident always starts
+with: `RESIDENT_MODEL` (for example `claude-opus-5-5`) and `RESIDENT_EFFORT` (`low`, `medium`, `high`, `xhigh`, `max`) in the same file, or
+`--model` and `--effort` on the installer; empty means the account's defaults (see [docs/resident.md](resident.md#model-and-effort)). The installer does not set
 `SENTINEL_RESIDENT_UNIT` (the unit is not running yet, so Atlas would report the resident dead at once). After
 `systemctl enable --now atlas-resident.service` set it in `/var/lib/atlas/sentinel.env`, so Atlas reports the resident
 dead when the unit fails:

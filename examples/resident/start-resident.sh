@@ -55,7 +55,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     key="${BASH_REMATCH[1]}"
     val="${BASH_REMATCH[2]}"
     case "$key" in
-    RESIDENT_DIR | RESIDENT_SESSION | RESIDENT_NAME | RESIDENT_PERMISSION_MODE | RESIDENT_CLAUDE | SENTINEL_ATLAS | ATLAS_CODE | RESIDENT_EXTRA_ARGS | RESIDENT_AUTH_CHECKS) ;;
+    RESIDENT_DIR | RESIDENT_SESSION | RESIDENT_NAME | RESIDENT_PERMISSION_MODE | RESIDENT_CLAUDE | SENTINEL_ATLAS | ATLAS_CODE | RESIDENT_EXTRA_ARGS | RESIDENT_AUTH_CHECKS | RESIDENT_MODEL | RESIDENT_EFFORT) ;;
     *) env_bad "$lineno" "unknown key $key" ;;
     esac
     if [[ $val =~ ^\"([^\"\$\`\\]*)\"$ ]]; then
@@ -74,6 +74,8 @@ RESIDENT_PERMISSION_MODE="${RESIDENT_PERMISSION_MODE:-}"
 RESIDENT_CLAUDE="${RESIDENT_CLAUDE:-claude}"
 RESIDENT_AUTH_CHECKS="${RESIDENT_AUTH_CHECKS:-}"
 RESIDENT_EXTRA_ARGS="${RESIDENT_EXTRA_ARGS:-}"
+RESIDENT_MODEL="${RESIDENT_MODEL:-}"
+RESIDENT_EFFORT="${RESIDENT_EFFORT:-}"
 SENTINEL_ATLAS="${SENTINEL_ATLAS:-/var/lib/atlas}"
 ATLAS_CODE="${ATLAS_CODE:-/opt/atlas}"
 
@@ -103,6 +105,18 @@ case "$RESIDENT_PERMISSION_MODE" in
 default | acceptEdits | plan | bypassPermissions) ;;
 *)
     log "choose a permission mode: set RESIDENT_PERMISSION_MODE in $ENV_FILE (see docs/resident.md)"
+    exit 2
+    ;;
+esac
+model_re='^[a-z0-9][]a-z0-9.[-]{1,63}$'
+if [ -n "$RESIDENT_MODEL" ] && [[ ! $RESIDENT_MODEL =~ ${model_re} ]]; then
+    log "RESIDENT_MODEL '$RESIDENT_MODEL' is not a model id: allowed form ^[a-z0-9][a-z0-9.[]-]{1,63}$, e.g. claude-opus-5-5 or opus (see docs/resident.md)"
+    exit 2
+fi
+case "$RESIDENT_EFFORT" in
+'' | low | medium | high | xhigh | max) ;;
+*)
+    log "RESIDENT_EFFORT '$RESIDENT_EFFORT' is not an effort level: allowed values low|medium|high|xhigh|max (or empty)"
     exit 2
     ;;
 esac
@@ -186,8 +200,12 @@ Report a short result to the human. Never start a polling loop."
 set -f
 read -r -a extra <<<"$RESIDENT_EXTRA_ARGS"
 set +f
+# Model and effort: the operator's choice (docs/resident.md), right after --permission-mode; empty = account default.
+chosen=()
+[ -n "$RESIDENT_MODEL" ] && chosen+=(--model "$RESIDENT_MODEL")
+[ -n "$RESIDENT_EFFORT" ] && chosen+=(--effort "$RESIDENT_EFFORT")
 cmd=(screen -DmS "$RESIDENT_SESSION" "$RESIDENT_CLAUDE" --remote-control "$RESIDENT_NAME" -n "$RESIDENT_NAME"
-    --permission-mode "$RESIDENT_PERMISSION_MODE" "${extra[@]}" "$PROMPT")
+    --permission-mode "$RESIDENT_PERMISSION_MODE" "${chosen[@]}" "${extra[@]}" "$PROMPT")
 
 if [ "$DRY" = 1 ]; then
     log "dry run: would exec:"

@@ -95,7 +95,7 @@ To also set up an AI resident that starts at boot, add `--resident-user NAME --p
 `--resident-name`). The trust level is **your explicit choice**, there is no default: `default` (the agent asks you
 before risky actions), `acceptEdits`, `plan`, or `bypassPermissions` (the agent acts without asking). The installer
 writes the files but does not start the unit; it prints the remaining steps (login, one-time prompts,
-`systemctl enable --now atlas-resident`). See [docs/quickstart.md](docs/quickstart.md) step 9.
+`systemctl enable --now atlas-resident`). `--model ID` and `--effort LEVEL` fix the model and effort it always starts with (`RESIDENT_MODEL`, `RESIDENT_EFFORT`; see [docs/resident.md](docs/resident.md#model-and-effort)). See [docs/quickstart.md](docs/quickstart.md) step 9.
 
 The installer (idempotent; defaults `--code /opt/atlas --state /var/lib/atlas --user atlas`):
 

@@ -2,7 +2,8 @@
 # install.sh - install Atlas + Sentinel on a Debian/Ubuntu host with systemd (Apache optional).
 #
 #   ./install.sh [--code DIR] [--state DIR] [--user NAME] [--with-apache] [--install-cron] [--yes] [--dry-run]
-#                [--resident-user NAME --permission-mode MODE [--resident-name NAME]]
+#                [--resident-user NAME --permission-mode MODE [--resident-name NAME]
+#                 [--model ID] [--effort LEVEL]]
 #
 # Idempotent: run it again after an update. It never overwrites an existing sentinel.env (or any other
 # file in the state directory). --dry-run prints every action instead of doing it; every system
@@ -15,7 +16,7 @@ CODE=/opt/atlas
 STATE=/var/lib/atlas
 AUSER=atlas
 DRY=0 APACHE=0 CRON=0 YES=0
-RUSER='' PMODE='' RNAME=''
+RUSER='' PMODE='' RNAME='' RMODEL='' REFFORT=''
 # Tests only: ATLAS_ETC_DIR points the resident config at a private dir; production uses /etc/atlas.
 ETC_DIR=${ATLAS_ETC_DIR:-/etc/atlas}
 SYSTEMD_DIR=${ATLAS_SYSTEMD_DIR:-/etc/systemd/system}
@@ -46,6 +47,8 @@ Options:
                      bypassPermissions  the agent acts WITHOUT asking (also needs --allow-dangerously-skip-permissions,
                                         which the installer then writes into RESIDENT_EXTRA_ARGS)
   --resident-name NAME   name shown in the Claude app (Remote Control); default the host name
+  --model ID       Claude Code model id or alias the resident always starts with (RESIDENT_MODEL); default: account default
+  --effort LEVEL   low|medium|high|xhigh|max, the effort the resident always starts with (RESIDENT_EFFORT); default: account default
   --yes            do not ask before accepting the first snapshot as the baseline
   --dry-run        print every action, change nothing
 EOF
@@ -61,6 +64,8 @@ while [ $# -gt 0 ]; do
         --resident-user) RUSER=${2:?--resident-user needs a name}; shift 2 ;;
         --permission-mode) PMODE=${2:?--permission-mode needs a value}; shift 2 ;;
         --resident-name) RNAME=${2:?--resident-name needs a name}; shift 2 ;;
+        --model) RMODEL=${2:?--model needs a value}; shift 2 ;;
+        --effort) REFFORT=${2:?--effort needs a value}; shift 2 ;;
         --yes|-y) YES=1; shift ;;
         --dry-run|-n) DRY=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -126,9 +131,16 @@ if [ -n "$RUSER" ]; then
         else echo "install.sh: --resident-user $RUSER does not exist (create the account first)" >&2; exit 2; fi
     fi
     [ "$RHOME" = "<home of $RUSER>" ] || valid_path "$RHOME" || { echo "install.sh: the home directory of $RUSER has characters outside the path alphabet" >&2; exit 2; }
+    model_re='^[a-z0-9][]a-z0-9.[-]{1,63}$'
+    if [ -n "$RMODEL" ] && [[ ! $RMODEL =~ ${model_re} ]]; then
+        echo 'install.sh: --model must match ^[a-z0-9][a-z0-9.[]-]{1,63}$ (for example claude-opus-5-5 or opus)' >&2; exit 2
+    fi
+    case $REFFORT in ''|low|medium|high|xhigh|max) ;;
+        *) echo 'install.sh: --effort must be one of low|medium|high|xhigh|max' >&2; exit 2 ;;
+    esac
     [ "$PMODE" = bypassPermissions ] && RESIDENT_EXTRA='--allow-dangerously-skip-permissions'
-elif [ -n "$PMODE" ] || [ -n "$RNAME" ]; then
-    echo "install.sh: --permission-mode and --resident-name need --resident-user" >&2; exit 2
+elif [ -n "$PMODE" ] || [ -n "$RNAME" ] || [ -n "$RMODEL" ] || [ -n "$REFFORT" ]; then
+    echo "install.sh: --permission-mode, --resident-name, --model and --effort need --resident-user" >&2; exit 2
 fi
 
 run() {   # every action that changes the system goes through here
@@ -303,6 +315,7 @@ if [ -n "$RUSER" ]; then
     render "$REPO/examples/systemd/atlas-resident.service" "$TMP/atlas-resident.service"
     sed -e "s|^RESIDENT_NAME=.*|RESIDENT_NAME=\"$RNAME\"|" \
         -e "s|^RESIDENT_PERMISSION_MODE=.*|RESIDENT_PERMISSION_MODE=\"$PMODE\"|" \
+        -e "s|^RESIDENT_MODEL=.*|RESIDENT_MODEL=\"$RMODEL\"|" -e "s|^RESIDENT_EFFORT=.*|RESIDENT_EFFORT=\"$REFFORT\"|" \
         -e "s|^RESIDENT_EXTRA_ARGS=.*|RESIDENT_EXTRA_ARGS=\"$RESIDENT_EXTRA\"|" \
         -e "s|^SENTINEL_ATLAS=.*|SENTINEL_ATLAS=\"$STATE\"|" -e "s|^ATLAS_CODE=.*|ATLAS_CODE=\"$CODE\"|" \
         "$REPO/examples/resident/resident.env" > "$TMP/resident.env"
@@ -318,7 +331,7 @@ if [ -n "$RUSER" ]; then
     fi
     run install -d -m 0755 -o root -g root "$ETC_DIR"
     if [ -e "$ETC_DIR/resident.env" ]; then
-        say "keeping existing $ETC_DIR/resident.env (your trust level choice stays; edit it by hand to change it)"
+        say "keeping existing $ETC_DIR/resident.env (your choices stay; to change them edit RESIDENT_PERMISSION_MODE, RESIDENT_MODEL, RESIDENT_EFFORT as root, then systemctl restart atlas-resident: that ends the current session)"
     else
         run install -m 0644 -o root -g root "$TMP/resident.env" "$ETC_DIR/resident.env"
     fi
@@ -480,6 +493,7 @@ if [ ! -e "$STATE/sentinel.env" ] || ! grep -qE '^SENTINEL_EMAIL=.+' "$STATE/sen
     say "NEXT: set SENTINEL_EMAIL in $STATE/sentinel.env - until then escalation reports UNKNOWN (no recipient)"
 fi
 if [ -n "$RUSER" ]; then
+    say "AI resident model $([ -n "$RMODEL" ] && echo "$RMODEL" || echo 'account default'), effort $([ -n "$REFFORT" ] && echo "$REFFORT" || echo 'account default')"
     say "AI resident: NOT started. Remaining steps, as $RUSER over SSH:"
     say "    1. claude auth login          (open the URL on your own computer, paste the code back)"
     say "    2. cd to RESIDENT_DIR in $ETC_DIR/resident.env, run claude once, answer the trust and Remote Control prompts"
@@ -487,6 +501,11 @@ if [ -n "$RUSER" ]; then
     say "    4. then tell Atlas the unit exists (otherwise it never reports the resident dead):"
     say "       sudo sed -i 's|^SENTINEL_RESIDENT_UNIT=.*|SENTINEL_RESIDENT_UNIT=atlas-resident.service|' $STATE/sentinel.env"
     say "    (screen must be installed: sudo apt-get install -y screen; details in docs/quickstart.md step 9)"
+elif [ -r "$ETC_DIR/resident.env" ]; then
+    # An upgrade run without --resident-user: report what is configured, never touch the file.
+    renv() { sed -n "s/^$1=\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*$/\1/p" "$ETC_DIR/resident.env" | head -n 1; }
+    cm=$(renv RESIDENT_PERMISSION_MODE); cmodel=$(renv RESIDENT_MODEL); ceffort=$(renv RESIDENT_EFFORT)
+    say "AI resident: configured (trust level ${cm:-not set}, model ${cmodel:-account default}, effort ${ceffort:-account default}); edit $ETC_DIR/resident.env to change"
 else
     say "AI resident (optional): not set up. To start an AI session at boot you must choose its trust level:"
     say "    ./install.sh --resident-user NAME --permission-mode default|acceptEdits|plan|bypassPermissions"
