@@ -25,11 +25,29 @@ WatchdogSec=120
 MemoryMax=80M
 CPUQuota=10%
 Nice=10
-# Hardening: it only reads logs and writes the bus + /var/tmp/sentinel; the router runs mail or the
-# configured notify command.
+# The router hands failed notices to the outbox because NoNewPrivileges blocks setuid MTAs.
 NoNewPrivileges=yes
-PrivateTmp=no
-ProtectSystem=full
+ProtectSystem=strict
+ReadWritePaths=@ATLAS_STATE@
+ProtectHome=read-only
+PrivateTmp=yes
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateDevices=yes
+UMask=0027
 
 [Install]
 WantedBy=multi-user.target
