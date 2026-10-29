@@ -200,11 +200,15 @@ def have(tool):
 # last logout (lingering off), so it is per-login and transient: every SSH session would otherwise show as
 # drift (ADDED at login, REMOVED at logout). Only this exact shape is skipped. user-runtime-dir@<uid>.service
 # is a RemainAfterExit oneshot (state "exited"), which `--state=running` never lists, so it needs no entry.
-PER_LOGIN_UNIT_RE = re.compile(r"user@[0-9]{1,10}\.service")  # uid: 1-10 digits (32-bit)
+# The regex checks the shape (no leading zeros except 0 itself); the value is then bounded: a Linux UID is a
+# 32-bit number and 2^32-1 (4294967295) is the invalid (uid_t)-1, so the largest valid UID is 4294967294.
+PER_LOGIN_UNIT_RE = re.compile(r"user@(0|[1-9][0-9]{0,9})\.service")
+MAX_UID = 2**32 - 2
 
 
 def is_per_login_unit(name):
-    return PER_LOGIN_UNIT_RE.fullmatch(name) is not None
+    m = PER_LOGIN_UNIT_RE.fullmatch(name)
+    return m is not None and int(m.group(1)) <= MAX_UID
 
 
 def without_per_login_units(snap):

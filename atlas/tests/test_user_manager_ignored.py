@@ -51,6 +51,13 @@ class TestUserManagerIgnored(unittest.TestCase):
         ):
             self.assertFalse(f(n), n)
 
+    def test_uid_bound(self):
+        f = atlas.is_per_login_unit
+        for n in ("0", "1000", "4294967294"):
+            self.assertTrue(f(at("user", n + ".service")), n)
+        for n in ("4294967295", "4294967296", "9999999999", "01000", "00", "12345678901", "12a"):
+            self.assertFalse(f(at("user", n + ".service")), n)
+
     def test_collector_filters_only_user_manager(self):
         with mock.patch.object(atlas, "measure", fake_measure):
             running = atlas.services()["running"]
@@ -80,7 +87,7 @@ class TestUserManagerIgnored(unittest.TestCase):
             self.assertEqual(atlas.without_per_login_units(snap), snap)
 
     def test_uid_is_bounded(self):
-        self.assertTrue(atlas.is_per_login_unit(at("user", "4294967295.service")))
+        self.assertTrue(atlas.is_per_login_unit(at("user", "4294967294.service")))
         self.assertFalse(atlas.is_per_login_unit(at("user", "99999999999999999999.service")))
         self.assertFalse(atlas.is_per_login_unit(at("user", "12345678901.service")))
 
