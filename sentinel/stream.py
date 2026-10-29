@@ -18,6 +18,7 @@ SENTINEL_STATE_DIR, SENTINEL_JOURNAL_CMD, SENTINEL_WEB_CMD, SENTINEL_UNREADABLE_
 SENTINEL_RESTART_DELAY, SENTINEL_STABLE_SECS, SENTINEL_HEARTBEAT_SECS, SENTINEL_WATCHDOG_SECS,
 plus the bus/router variables.
 """
+import functools
 import hashlib
 import ipaddress
 import json
@@ -57,7 +58,7 @@ DEFAULT_STABLE_SECS = 10.0
 TICK = 1.0
 
 # Only these journal fields are requested: smaller JSON, less parsing on 1 vCPU.
-JOURNAL_FIELDS = "MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_PID,UNIT,_TRANSPORT"
+JOURNAL_FIELDS = "MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_PID,UNIT,_TRANSPORT,_UID,_EXE,_COMM"
 # `+` is journalctl's OR between match groups: the kernel ring, PID 1, sudo and ssh.service only.
 JOURNAL_CMD = ("journalctl -f -o json -n 0 --output-fields=" + JOURNAL_FIELDS +
                " _SYSTEMD_UNIT=ssh.service + SYSLOG_IDENTIFIER=sudo + _PID=1 + _TRANSPORT=kernel")
@@ -74,10 +75,15 @@ PROCESS_LIMIT = 32
 IP_LIMIT = 45            # the longest textual IPv6 address
 SUSPECT_SAMPLE = 40
 SUSPECT_SENSOR = "input.injection-suspect"
+FORGED_SENSOR = "auth.sudo.forged"
+LIMITED_SENSORS = frozenset({SUSPECT_SENSOR, FORGED_SENSOR})
+UID_LIMIT = 12
+ATLAS_MEASURE_EXES = frozenset({"ss", "sha256sum", "ls", "test", "find", "certbot", "ufw",
+                                "fail2ban-client", "docker", "journalctl", "cat", "ssh-keygen", "crontab"})
 METHOD_LIMIT = 16
 KNOWN_METHODS = frozenset(("GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "TRACE", "CONNECT",
                            "PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK", "REPORT", "SEARCH"))
-# Suspect warnings are written by the attacker's own requests, and bus dedup happens only on the
+# Suspect and forged sudo warnings can be attacker-driven, and bus dedup happens only on the
 # reading side: without a limit, a scanner could fill the bus. At most one warning per suspect
 # fingerprint per 10 minutes and 30 per hour overall; the rest is counted and reported once an hour.
 # Primary events are never limited by this.
@@ -88,14 +94,53 @@ SUSPECT_WINDOW_SECS = 3600
 
 def trusted_sudo_users():
     """Users whose sudo is routine (info only, never wakes): SENTINEL_TRUSTED_SUDO_USERS, comma or
-    space separated, default "root". Add the account the resident works under: it uses sudo all day."""
+    space separated, default "root". Agent accounts belong in SENTINEL_AGENT_SUDO_USERS instead."""
     raw = os.environ.get("SENTINEL_TRUSTED_SUDO_USERS")
     raw = "root" if raw is None else raw
     return {u for u in re.split(r"[\s,]+", raw) if u}
 
 
+def sudo_exes() -> frozenset[str]:
+    """Exact trusted executable paths, comma or space separated."""
+    return frozenset(x for x in re.split(r"[\s,]+", os.environ.get("SENTINEL_SUDO_EXE", "/usr/bin/sudo")) if x)
+
+
+def agent_sudo_users() -> set[str]:
+    """Accounts whose successful sudo is included in the daily digest."""
+    return {u for u in re.split(r"[\s,]+", os.environ.get("SENTINEL_AGENT_SUDO_USERS", "")) if u}
+
+
+@functools.lru_cache(256)
+def _uid_name(uid: str) -> str | None:
+    try:
+        return pwd.getpwuid(int(uid)).pw_name
+    except (KeyError, ValueError, OverflowError):
+        return None
+
+
+def sudo_sender(entry: dict, user_raw: str) -> str:
+    """Validate journald's sender identity before trusting any sudo message fields."""
+    if "_EXE" in entry:
+        if not isinstance(entry["_EXE"], str) or entry["_EXE"] not in sudo_exes():
+            return "exe-mismatch"
+        result = "ok"
+    else:
+        if entry.get("_COMM") != "sudo":
+            return "exe-mismatch"
+        result = "ok-exe-missing"
+    uid = entry.get("_UID")
+    if not isinstance(uid, str) or not uid:
+        return "uid-missing"
+    name = _uid_name(uid)
+    if name is None:
+        return "uid-unknown"
+    if name != user_raw:
+        return "uid-mismatch"
+    return result
+
+
 def self_user():
-    """The account this daemon runs as (the Atlas user). Its successful sudo is Atlas measuring."""
+    """The account this daemon runs as (the Atlas user). Its narrowly allowlisted sudo may be Atlas measuring."""
     try:
         return pwd.getpwuid(os.geteuid()).pw_name
     except KeyError:
@@ -140,7 +185,7 @@ def _ev(sensor, severity, what, fingerprint, evidence, command, message=None, co
 
 
 class SuspectLimiter:
-    """In-process rate limit for `input.injection-suspect` events, applied before they reach the bus.
+    """In-process rate limit for suspect and forged sudo events before they reach the bus.
     filter(events) passes every other event unchanged; flush() returns the hourly summary of what was
     suppressed (at most one per window). Thread-safe: the journal and web followers share one."""
 
@@ -176,7 +221,7 @@ class SuspectLimiter:
             now = self.clock()
             out = self._roll(now)
             for ev in events:
-                if ev.get("sensor") != SUSPECT_SENSOR:
+                if ev.get("sensor") not in LIMITED_SENSORS:
                     out.append(ev)
                     continue
                 fp = ev.get("fingerprint")
@@ -248,18 +293,32 @@ def journal_events(entry, known_ips_path=None):
         if not m:
             return []
         user_raw, fields, cmd_raw = m.group(1), m.group(2), m.group(3).strip()
+        sender = sudo_sender(entry, user_raw)
+        if sender not in {"ok", "ok-exe-missing"}:
+            uid = clean(entry.get("_UID", ""), UID_LIMIT)
+            return [_ev(FORGED_SENSOR, "warning",
+                        "forged sudo log line rejected (sender uid %s: %s)" % (uid, sender),
+                        "auth.sudo.forged:uid%s:%s" % (uid, sender),
+                        {"uid": uid, "reason": sender}, "journalctl -t sudo --since -1h")]
         first = fields.split(";", 1)[0].strip()
         reason = clean(first, 80) if first and not _SUDO_FIELD.match(first) else ""
         exe = clean(os.path.basename(cmd_raw.split()[0]) if cmd_raw.split() else "-", 64)
         user = clean(user_raw, USER_LIMIT)
         me = self_user()
-        if not reason and user_raw == me and me != "root":
+        cwd = next((f.strip()[4:] for f in fields.split(";") if f.strip().startswith("PWD=")), None)
+        if (not reason and user_raw == me and me != "root" and exe in ATLAS_MEASURE_EXES
+                and cwd is not None and os.path.realpath(cwd) == os.path.realpath(bus.atlas_dir())):
             # the Atlas user running its allowlisted read-only commands (~300 per patrol): not news
             return []
-        trusted = user_raw in trusted_sudo_users() and not reason
+        agent = user_raw in agent_sudo_users() and not reason
+        trusted = (agent or user_raw in trusted_sudo_users()) and not reason
         what = "sudo by %s%s: %s" % (quote(user_raw, USER_LIMIT), " (%s)" % reason if reason else "",
                                      quote(cmd_raw, COMMAND_WHAT_LIMIT))
         evidence = {"user": user, "command": clean(cmd_raw, COMMAND_EVIDENCE_LIMIT)}
+        if sender == "ok-exe-missing":
+            evidence["exe"] = "missing"
+        if agent:
+            evidence["digest"] = True
         if reason:
             evidence["reason"] = reason
         hint = "journalctl -t sudo --since -1h"
