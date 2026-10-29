@@ -16,7 +16,7 @@ reach the human. Never try to "help" by silencing that path.
 ## What you watch
 
 - `<state>/ALERT` - written by the patrol (every few minutes): drift from the accepted baseline, failed
-  measurements (`UNKNOWN`), thresholds, failed job contracts. `<state>/ALERT.acked` acknowledges one content.
+  measurements (`UNKNOWN`), thresholds, failed job contracts. `atlas.py ack` writes `<state>/ALERT.acked`, which acknowledges one content.
 - `<state>/events.jsonl` - the event bus: real-time events from `stream.py` (SSH logins from unknown addresses,
   sudo by untrusted users, failed units, OOM kills, sensitive web paths) and from the patrol.
 - `<state>/REPORT-TO-SEND` - a report a bridge prepared for the human.
@@ -24,7 +24,8 @@ reach the human. Never try to "help" by silencing that path.
 
 The state directory belongs to the `atlas` user. If your account does not own it, run state changes as that user,
 for example `sudo -u atlas env SENTINEL_ATLAS=/var/lib/atlas python3 /opt/atlas/atlas/atlas.py bless` and
-`sudo -u atlas touch /var/lib/atlas/ALERT.acked`.
+`sudo -u atlas env SENTINEL_ATLAS=/var/lib/atlas python3 /opt/atlas/atlas/atlas.py ack`.
+Never acknowledge with a bare `touch`: `atlas.py ack` ties the acknowledgement to the ALERT content and tells the human.
 
 ## How you wake up
 
@@ -61,7 +62,8 @@ Paths below use the installer defaults: code in `/opt/atlas`, state in `/var/lib
    and read only its bounded JSON reply. Never `cat` or `tail` the slice yourself.
 4. **Decide.**
    - The change was made by the operator or by you, and you can say who and why: `python3
-     /opt/atlas/atlas/atlas.py bless`, then `touch <state>/ALERT.acked`.
+     /opt/atlas/atlas/atlas.py bless`, then `python3 /opt/atlas/atlas/atlas.py ack`
+     (which writes `ALERT.acked`; both as the atlas user).
    - A real fault inside your mandate (a failed service, a full disk): fix it, verify the fix by probing,
      then acknowledge.
    - Unexplained: do not bless, do not acknowledge. Report it as a possible intrusion and leave the alert

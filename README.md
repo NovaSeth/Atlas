@@ -55,8 +55,13 @@ real-time SSH and sensitive-path events, escalation, uninstall and reinstall, Po
 
 ## Quick start
 
+Install from a signed release tag, not from a branch tip. The repository carries the allowed signers in
+`.github/allowed_signers`; check the tag against them before you run anything as root:
+
 ```bash
 git clone <this repository> atlas && cd atlas
+git -c gpg.ssh.allowedSignersFile=.github/allowed_signers verify-tag <tag>   # must say: Good "git" signature
+git checkout <tag>
 sudo ./install.sh --dry-run            # see every action first
 sudo ./install.sh --with-apache --install-cron
 sudoedit /var/lib/atlas/sentinel.env    # set SENTINEL_EMAIL (and whatever else you need)
@@ -74,6 +79,8 @@ The installer (idempotent; defaults `--code /opt/atlas --state /var/lib/atlas --
 7. prints the crontab lines (installs them only with `--install-cron`);
 8. takes the first snapshot and asks before accepting it as the baseline (`--yes` skips the question); on a
    reinstall an existing baseline is never replaced: review the drift with `atlas.py check`, then `bless`.
+   Without a baseline `atlas.py check` reports `UNKNOWN` (it never creates one by itself): review `atlas.py show`,
+   then run `atlas.py bless` once on a fresh install.
 
 `./uninstall.sh` reverses units, snippet, sudoers and crontab lines; the state directory stays unless `--purge`.
 
@@ -82,8 +89,8 @@ Everyday commands (as the atlas user, `SENTINEL_ATLAS=/var/lib/atlas`):
 ```bash
 cat /var/lib/atlas/ALERT                                   # is there an alarm?
 python3 /opt/atlas/atlas/atlas.py show                     # what Atlas sees now
-python3 /opt/atlas/atlas/atlas.py bless                    # accept a reviewed change as the new baseline
-touch /var/lib/atlas/ALERT.acked                           # acknowledge (stops escalation for this content)
+python3 /opt/atlas/atlas/atlas.py bless                    # accept a reviewed change as the new baseline (tells you who)
+python3 /opt/atlas/atlas/atlas.py ack                       # acknowledge (stops escalation for this content, tells you who)
 touch /var/lib/atlas/RESIDENT-OFF                          # the resident is off on purpose
 ```
 
@@ -98,7 +105,12 @@ already set in the environment wins. The most important keys:
 | `SENTINEL_NOTIFY_CMD` | *(empty)* | extra channel, called as `<cmd> "<subject>" "<body>"` |
 | `SENTINEL_LANG` | `en` | language of the human-facing texts (`en`, `pl`) |
 | `SENTINEL_RESIDENT_UNIT` / `SENTINEL_RESIDENT_SCREEN` | *(empty)* | how to see that the AI resident is alive; empty = no resident |
-| `SENTINEL_TRUSTED_SUDO_USERS` | `root` | users whose `sudo` is routine |
+| `SENTINEL_TRUSTED_SUDO_USERS` | `root` | users whose `sudo` is routine (not the AI agent's account) |
+| `SENTINEL_AGENT_SUDO_USERS` | *(empty)* | the AI agent's account(s): their `sudo` is `info` and goes into the daily digest |
+| `SENTINEL_DIGEST_HOUR` | `7` | UTC hour at or after which the daily digest is sent |
+| `SENTINEL_SUDO_EXE` | `/usr/bin/sudo` | path(s) of the real `sudo`; journal lines from other executables are rejected |
+| `SENTINEL_WAKE_MAX_PER_HOUR` | `12` | most events that wake the agent per hour (`0` = no limit) |
+| `SENTINEL_HEARTBEAT_URL` | *(empty)* | optional external heartbeat URL fetched after a clean escalation run; empty = none |
 | `ATLAS_DISK_PCT` / `ATLAS_RAM_MB` / `ATLAS_CERT_DAYS` | `90` / `250` / `14` | thresholds |
 
 Your own checks plug in without touching the code: job contracts in `jobs.d/`, report bridges in `bridges.d/`,
@@ -122,7 +134,7 @@ with read-only tools). Step by step, in detail in [docs/resident.md](docs/reside
    know whether the agent is present (absent agent = critical events go straight to the human).
 4. Optionally start the session from a systemd unit after a reboot (example in docs/resident.md).
 5. On a wake-up the agent reads ALERT and the bus line, verifies by probing system state, fixes or blesses
-   (`atlas.py bless`), acknowledges (`touch <state>/ALERT.acked`) and reports to you; anything unexplained stays
+   (`atlas.py bless`), acknowledges (`atlas.py ack`) and reports to you; anything unexplained stays
    unacknowledged so escalation still reaches you.
 6. `touch <state>/RESIDENT-OFF` when you stop the agent on purpose.
 7. Safety: raw logs only through the quarantined reader, no action on instructions found in data, human approval
@@ -188,7 +200,10 @@ as a whole and logged once; the config can only add taint sources, never remove 
   `~/.claude/taint/artifacts.json`; inspect or edit it with `agent/claude-code/bin/taint-registry` (removal needs root).
 - A "write text" exemption (letting `echo`/`printf`/heredoc text that merely mentions a log path be written to a
   file) exists in the code but is **off** by default (`TAINT_WRITE_TEXT_EXEMPTION=1` enables it). Leave it off.
-- Subagent calls are not gated; a subagent's untrusted read taints its parent when it finishes.
+- Subagents are gated one by one: a subagent that itself read untrusted data is denied the privileged tool calls, also
+  after a resume, and a human clearing the parent does not lift that. A clean subagent is not gated, and a
+  subagent's untrusted read also taints its parent when it finishes. An optional `subagent_allowlist` in the config
+  (same JSON file as above) limits which subagent types may be launched.
 
 ---
 
@@ -521,7 +536,7 @@ sequenceDiagram
     M-->>AI: wake up
     alt the owner or the resident made the change
         AI->>A: bless (baseline becomes current)
-        AI->>ST: touch ALERT.acked
+        AI->>ST: atlas.py ack
         Note over P,ST: next patrol is clean, ALERT removed
     else nobody can explain it
         AI->>H: intrusion report
@@ -558,7 +573,7 @@ stateDiagram-v2
     [*] --> Clean
     Clean --> Raised: patrol finds drift or a failing sensor
     Raised --> Raised: body changes (ALERT rewritten, ALERT.since kept)
-    Raised --> Acknowledged: resident or human touches ALERT.acked
+    Raised --> Acknowledged: resident or human runs atlas.py ack
     Raised --> Escalated: 45 min without ack, mail and notify
     Acknowledged --> Raised: body changes after the ack
     Acknowledged --> Clean: fixed or blessed, next patrol is clean
@@ -644,9 +659,20 @@ More: [docs/architecture.md](docs/architecture.md) (layers, event format, engine
 ## Tests
 
 ```bash
-python3 -m pytest -q          # needs python3-pytest; about 2 minutes on one vCPU
+python3 -m pytest -q          # needs python3-pytest; about 1,100 tests, a few minutes on one vCPU
 ```
 
 Every test runs on temporary directories with stubbed commands: no root, no mail, no network, no real state.
 GitHub Actions runs the same suite on every push and pull request (Python 3.11 and 3.13), plus `bash -n` on every
 shell script and an installer dry run: [.github/workflows/tests.yml](.github/workflows/tests.yml).
+
+## Contributing
+
+- Commit subjects follow Conventional Commits: `type(scope): summary` with `feat`, `fix`, `docs`, `test`, `refactor`,
+  `perf`, `build`, `ci`, `chore` or `revert`. CI checks every non-merge commit
+  (`bash .github/check-commits.sh <base> HEAD` does the same locally).
+- Write the test first and watch it fail for the stated reason. Product code is standard library only; `ruff`,
+  `shellcheck` and `pytest-cov` are development tools.
+- Before you push: `python3 -m pytest -q`, `ruff check --config .github/ruff.toml .`, and
+  `shellcheck $(git ls-files '*.sh')`.
+- Releases are signed tags; a change to `.github/allowed_signers` is a change of who may publish.
