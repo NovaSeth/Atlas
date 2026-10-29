@@ -226,10 +226,18 @@ echo "exit $?"
 ```
 
 You should see a JSON reply from ntfy, `exit 0`, and the notification on your phone within seconds. `exit 6` or
-`22` means no network or a wrong URL. Nothing needs a restart: the escalation timer reads the file on its next run.
+`22` means no network or a wrong URL.
 Atlas has no separate test command; calling the notify command directly, as the Atlas account, is the test.
 
 You can use both recipes. Whichever you use, a test message must have reached you before you go on.
+
+**After any change to `sentinel.env`, restart the stream.** The escalation timer re-reads the file on every run, but
+the real-time stream reads it only when it starts:
+
+```bash
+sudo systemctl restart sentinel-stream.service
+systemctl is-active sentinel-stream.service    # must print: active
+```
 
 **Check that the three watchers are alive:**
 
@@ -345,7 +353,7 @@ claude --remote-control "atlas-server"
 ```
 
 Answer `y` to `Trust <directory>? [y/N]` (if asked) and `y` to `Enable Remote Control? (y/n)`. Then stop the
-session with `Ctrl+C` (press it twice if it does not stop). Asking these questions interactively once matters: inside tmux or a service nobody is looking.
+session with `Ctrl+C` (press it twice if it does not stop). Answer them here, once: inside tmux or a service nobody sees the prompt, and the session would wait forever.
 
 **Now the real session, inside tmux**, so it survives SSH logout:
 
