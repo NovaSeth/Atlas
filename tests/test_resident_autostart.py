@@ -51,8 +51,14 @@ class StartScript(unittest.TestCase):
         )
 
     def run_script(self, *args, **env):
-        e = {"PATH": f"{self.bin}:/usr/bin:/bin", "RESIDENT_ENV": str(self.env_file), "HOME": str(self.tmp)}
+        e = {
+            "PATH": f"{self.bin}:/usr/bin:/bin",
+            "RESIDENT_ENV": str(self.env_file),
+            "HOME": str(self.tmp),
+            "RESIDENT_ENV_TRUSTED_UID": str(os.getuid()),  # test harness only
+        }
         e.update(env)
+        e = {k: v for k, v in e.items() if v is not None}
         return subprocess.run(
             ["bash", str(SCRIPT), *args], env=e, capture_output=True, text=True, timeout=30, cwd=self.tmp
         )
@@ -118,6 +124,25 @@ class StartScript(unittest.TestCase):
         r = self.run_script("--dry-run")
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("must be owned by root and not group/other-writable", r.stderr)
+
+    def test_env_file_owned_by_agent_is_refused_by_default(self):
+        r = self.run_script("--dry-run", RESIDENT_ENV_TRUSTED_UID=None)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("must be owned by root", r.stderr)
+
+    def test_env_file_cannot_raise_its_own_trust(self):
+        self.write_env("RESIDENT_ENV_TRUSTED_UID=%d\n" % os.getuid())
+        r = self.run_script("--dry-run", RESIDENT_ENV_TRUSTED_UID=None)
+        self.assertEqual(r.returncode, 2, r.stderr)
+
+    def test_trusted_uid_accepts_owned_file(self):
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_mode_0666_refused_with_default_trusted_uid_too(self):
+        self.env_file.chmod(0o666)
+        r = self.run_script("--dry-run", RESIDENT_ENV_TRUSTED_UID=None)
+        self.assertEqual(r.returncode, 2, r.stderr)
 
     @unittest.skipUnless(os.geteuid() == 0, "needs root to create a file owned by someone else")
     def test_env_file_of_another_owner_is_refused(self):
