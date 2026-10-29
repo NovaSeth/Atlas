@@ -20,8 +20,9 @@ class Workflow(unittest.TestCase):
         self.assertTrue(uses)
         for u in uses:
             self.assertRegex(u, r"@[0-9a-f]{40}$", u)
-        self.assertIn("actions/checkout@11d5960a326750d5838078e36cf38b85af677262", WF.read_text())
-        self.assertIn("actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065", WF.read_text())
+        # D-KR-16: any full SHA with its version comment, so Dependabot bumps pass; the SHA form is the guard.
+        for name in ("actions/checkout", "actions/setup-python"):
+            self.assertRegex(WF.read_text(), re.escape(name) + r"@[0-9a-f]{40} # v\d+\.\d+\.\d+")
 
     def test_coverage_gate(self):
         text = WF.read_text()
@@ -32,6 +33,14 @@ class Workflow(unittest.TestCase):
     def test_dependabot_watches_actions(self):
         text = (ROOT / ".github" / "dependabot.yml").read_text()
         self.assertIn("package-ecosystem: github-actions", text.replace('"', ""))
+
+    def test_verify_tag_fetches_the_annotated_tag_first(self):
+        # actions/checkout leaves a lightweight tag at the commit; verify-tag needs the tag object.
+        text = WF.read_text()
+        job = text[text.index("verify-tag:"):]
+        fetch = job.find("git fetch --force origin \"refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}\"")
+        self.assertGreater(fetch, 0)
+        self.assertLess(fetch, job.index("verify-tag \"$GITHUB_REF_NAME\""))
 
     def test_tags_are_verified(self):
         self.assertIn("verify-tag", WF.read_text())
