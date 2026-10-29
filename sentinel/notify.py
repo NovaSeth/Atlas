@@ -129,6 +129,47 @@ def drain(max_seconds=60.0):
     return _drain(max_seconds)[0]
 
 
+def _lock_wait(lock, end):
+    """Take the outbox lock; False when `end` (monotonic) passes first. A stuck holder must not eat the budget."""
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            if time.monotonic() >= end:
+                return False
+            time.sleep(0.1)
+
+
+def _deliver(files, result, end):
+    """Send the queued entries oldest first, updating `result`; stops at the first failed send or at `end`."""
+    for i, f in enumerate(files):
+        try:
+            e = json.loads(f.read_text())
+            if not isinstance(e, dict):
+                raise ValueError("not an object")
+            expired = time.time() - float(e.get("created", 0)) > OUTBOX_MAX_AGE_S
+        except (OSError, ValueError, TypeError):
+            e, expired = None, True  # unreadable entry: drop it, counted
+        if expired:
+            try:
+                f.unlink()
+                result["dropped"] += 1
+            except OSError:
+                result["failed"] += 1
+            continue
+        left = end - time.monotonic()
+        if left <= 0 or not send(str(e.get("subject", "")), str(e.get("body", "")),
+                                 timeout=min(NOTIFY_TIMEOUT, left)):
+            result["failed"] += len(files) - i
+            break
+        try:
+            f.unlink()
+        except OSError:
+            pass
+        result["sent"] += 1
+
+
 def _drain(max_seconds):
     """(counts, error): `error` is a short text when the outbox could not be used at all, else ''."""
     result = {"sent": 0, "failed": 0, "dropped": 0}
@@ -143,43 +184,11 @@ def _drain(max_seconds):
     except (OSError, bus.UnsafeStateDir) as e:
         print("sentinel-notify: outbox unusable: %s" % e, file=sys.stderr, flush=True)
         return result, str(e)
-    error = ""
     try:
-        while True:  # bounded lock wait: a stuck holder must not eat the whole budget
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError:
-                if time.monotonic() >= end:
-                    print("sentinel-notify: outbox lock busy", file=sys.stderr, flush=True)
-                    return result, "lock busy"
-                time.sleep(0.1)
-        files = _entries(box)
-        for i, f in enumerate(files):
-            try:
-                e = json.loads(f.read_text())
-                if not isinstance(e, dict):
-                    raise ValueError("not an object")
-                expired = time.time() - float(e.get("created", 0)) > OUTBOX_MAX_AGE_S
-            except (OSError, ValueError, TypeError):
-                e, expired = None, True  # unreadable entry: drop it, counted
-            if expired:
-                try:
-                    f.unlink()
-                    result["dropped"] += 1
-                except OSError:
-                    result["failed"] += 1
-                continue
-            left = end - time.monotonic()
-            if left <= 0 or not send(str(e.get("subject", "")), str(e.get("body", "")),
-                                     timeout=min(NOTIFY_TIMEOUT, left)):
-                result["failed"] += len(files) - i
-                break
-            try:
-                f.unlink()
-            except OSError:
-                pass
-            result["sent"] += 1
+        if not _lock_wait(lock, end):
+            print("sentinel-notify: outbox lock busy", file=sys.stderr, flush=True)
+            return result, "lock busy"
+        _deliver(_entries(box), result, end)
         d = box / DROPPED_FILE
         try:
             result["dropped"] += int(d.read_text().strip() or 0)
@@ -188,7 +197,7 @@ def _drain(max_seconds):
             pass
     finally:
         os.close(lock)
-    return result, error
+    return result, ""
 
 
 def main(argv=None):

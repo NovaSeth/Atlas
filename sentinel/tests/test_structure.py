@@ -25,6 +25,4 @@ class Structure(unittest.TestCase):
 
     def test_timeouts_are_named(self):
         for name in ("router.py", "stream.py", "bus.py", "notify.py", "digest.py"):
-            path = SENTINEL / name
-            if path.exists():
-                self.assertIsNone(re.search(r"timeout=\d", path.read_text()), name)
+            self.assertIsNone(re.search(r"timeout=\d", (SENTINEL / name).read_text()), name)
