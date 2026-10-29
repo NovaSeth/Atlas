@@ -40,7 +40,7 @@ unit_atlas="${SENTINEL_ATLAS:-}"
 
 RESIDENT_SESSION="${RESIDENT_SESSION:-claude}"
 RESIDENT_NAME="${RESIDENT_NAME:-atlas-server}"
-RESIDENT_PERMISSION_MODE="${RESIDENT_PERMISSION_MODE:-default}"
+RESIDENT_PERMISSION_MODE="${RESIDENT_PERMISSION_MODE:-}"
 RESIDENT_CLAUDE="${RESIDENT_CLAUDE:-claude}"
 RESIDENT_AUTH_CHECKS="${RESIDENT_AUTH_CHECKS:-}"
 RESIDENT_EXTRA_ARGS="${RESIDENT_EXTRA_ARGS:-}"
@@ -60,6 +60,14 @@ if screen -ls 2>/dev/null | grep -qE "[0-9]+\.${RESIDENT_SESSION}[[:space:]]"; t
 fi
 
 # Setup checks before any waiting, each with its own result.
+# The trust level is the human's explicit choice: no default.
+case "$RESIDENT_PERMISSION_MODE" in
+default | acceptEdits | plan | bypassPermissions) ;;
+*)
+    log "choose a permission mode: set RESIDENT_PERMISSION_MODE in $ENV_FILE (see docs/resident.md)"
+    exit 2
+    ;;
+esac
 case "$RESIDENT_EXTRA_ARGS" in
 *$'\n'*)
     log "RESIDENT_EXTRA_ARGS must not contain a newline"

@@ -114,8 +114,7 @@ and stays attachable. This is not an official Claude Code feature; the exact ins
 - `examples/systemd/atlas-resident.service` - a system service (`User=<agent account>`; a user service would die at
   logout), `Type=exec`, `Restart=on-failure`, at most 5 starts per hour.
 - `examples/resident/resident.env` - installed as `/etc/atlas/resident.env`: working directory, screen name,
-  Remote Control name, `RESIDENT_PERMISSION_MODE` (`default` keeps the human approval step; `bypassPermissions`
-  removes it), path of `claude`, optional extra login checks (`RESIDENT_AUTH_CHECKS="codex login status"`).
+  Remote Control name, `RESIDENT_PERMISSION_MODE` (no default: you choose, see below), path of `claude`, optional extra login checks (`RESIDENT_AUTH_CHECKS="codex login status"`).
 - `RESIDENT_EXTRA_ARGS` (empty by default) adds claude flags before the first prompt, split on whitespace (no quoting,
   no newline). Example: `--permission-mode bypassPermissions` also needs `--allow-dangerously-skip-permissions`,
   otherwise claude may stop at a consent prompt with nobody watching. Risk: this combination removes the human
@@ -124,6 +123,18 @@ and stays attachable. This is not an official Claude Code feature; the exact ins
   checks the logins, writes `<state>/BOOT`, then starts a fresh session whose first prompt points the agent to
   `AGENTS.md`, `BOOT` and `AFTER-REBOOT.md` and tells it to re-arm the session sensor. `--dry-run` prints what it
   would do. Exit 2 = bad setup (the env file is sourced as shell code, so it must be root-owned and not writable by group/other), 3 = a login is missing, 4 = `claude` not found.
+
+### Choose the trust level
+
+Before enabling the unit, set `RESIDENT_PERMISSION_MODE` in `/etc/atlas/resident.env`; the script refuses to start
+while it is empty or not one of these four values (exit 2, "choose a permission mode"):
+
+- `default` - the agent asks you before risky actions; you answer from the Claude app.
+- `acceptEdits` - file edits go through without asking, other risky actions still ask.
+- `plan` - the agent only reads and plans.
+- `bypassPermissions` - the agent acts without asking. It also needs `--allow-dangerously-skip-permissions` in
+  `RESIDENT_EXTRA_ARGS`. Risk: an AI with shell access, started at boot, runs unattended with every right the
+  account has.
 
 Risk: this starts an AI with shell access at boot, with nobody watching; the account's rights limit it. Then set
 `SENTINEL_RESIDENT_UNIT=atlas-resident.service` (step 3). Whatever starts the agent, it must re-arm the session

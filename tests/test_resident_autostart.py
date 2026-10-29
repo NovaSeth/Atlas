@@ -46,7 +46,7 @@ class StartScript(unittest.TestCase):
 
     def write_env(self, extra=""):
         self.env_file.write_text(
-            f"RESIDENT_DIR={self.work}\nRESIDENT_SESSION=claude\nRESIDENT_NAME=atlas-server\n"
+            f"RESIDENT_DIR={self.work}\nRESIDENT_SESSION=claude\nRESIDENT_NAME=atlas-server\nRESIDENT_PERMISSION_MODE=default\n"
             f"RESIDENT_CLAUDE={self.bin}/claude\nSENTINEL_ATLAS={self.state}\nATLAS_CODE=/opt/atlas\n{extra}"
         )
 
@@ -139,7 +139,9 @@ class StartScript(unittest.TestCase):
         self.assertEqual(r.returncode, 4, r.stderr)
 
     def test_unset_resident_dir_exits_two_with_prefix(self):
-        self.env_file.write_text(f"RESIDENT_CLAUDE={self.bin}/claude\nSENTINEL_ATLAS={self.state}\n")
+        self.env_file.write_text(
+            f"RESIDENT_PERMISSION_MODE=default\nRESIDENT_CLAUDE={self.bin}/claude\nSENTINEL_ATLAS={self.state}\n"
+        )
         r = self.run_script("--dry-run")
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("start-resident: RESIDENT_DIR", r.stderr)
@@ -188,6 +190,26 @@ class StartScript(unittest.TestCase):
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertIn("RESIDENT_EXTRA_ARGS", r.stderr)
 
+    def test_empty_permission_mode_is_refused(self):
+        self.write_env("RESIDENT_PERMISSION_MODE=\n")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("choose a permission mode: set RESIDENT_PERMISSION_MODE in", r.stderr)
+        self.assertIn("(see docs/resident.md)", r.stderr)
+
+    def test_unknown_permission_mode_is_refused(self):
+        self.write_env("RESIDENT_PERMISSION_MODE=yolo\n")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("choose a permission mode", r.stderr)
+
+    def test_every_valid_permission_mode_reaches_argv(self):
+        for mode in ("default", "acceptEdits", "plan", "bypassPermissions"):
+            self.write_env(f"RESIDENT_PERMISSION_MODE={mode}\n")
+            r = self.run_script("--dry-run")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn(f"--permission-mode {mode} ", r.stdout)
+
     def test_default_env_path_is_etc_atlas(self):
         self.assertIn("/etc/atlas/resident.env", SCRIPT.read_text())
 
@@ -223,7 +245,9 @@ class Templates(unittest.TestCase):
             "RESIDENT_DIR=~/resident",
             "RESIDENT_SESSION=",
             "RESIDENT_NAME=",
-            "RESIDENT_PERMISSION_MODE=default",
+            "RESIDENT_PERMISSION_MODE=\n",
+            "acceptEdits",
+            "choose",
             "RESIDENT_CLAUDE=",
             "RESIDENT_AUTH_CHECKS=",
             "RESIDENT_EXTRA_ARGS=",
