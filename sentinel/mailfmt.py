@@ -2,7 +2,7 @@
 """Sentinel mail formatting: one plain-text part (the exact body) plus a clean HTML part (stdlib only, no LLM).
 
     build(subject, body, kind, lang) -> EmailMessage    multipart/alternative, text first
-    send_mail(msg) -> (ok, err)                         `sendmail -t -oi`, else plain `mail -s`
+    send_mail(msg) -> (ok, err)                         `sendmail -t -oi -odi`, else plain `mail -s`
 
 Every piece of text that reaches the HTML is escaped with html.escape(quote=True): log text (paths, user names,
 commands) is untrusted and must render as text, never as markup. Inline CSS only, no images, no URLs, no scripts.
@@ -230,7 +230,7 @@ def _plain_mail(msg, timeout):
 
 
 def send_mail(msg, timeout=SEND_TIMEOUT):
-    """(ok, err). sendmail -t -oi with the whole message; a missing binary falls back to plain `mail -s`."""
+    """(ok, err). sendmail -t -oi -odi (deliver before returning) with the whole message; a missing binary falls back to plain `mail -s`."""
     if not msg["To"]:
         return False, "no recipient"
     try:
@@ -238,7 +238,7 @@ def send_mail(msg, timeout=SEND_TIMEOUT):
         if not cmd:
             raise ValueError("empty command")
         try:
-            r = subprocess.run(cmd + ["-t", "-oi"], input=msg.as_bytes(), capture_output=True, timeout=timeout)
+            r = subprocess.run(cmd + ["-t", "-oi", "-odi"], input=msg.as_bytes(), capture_output=True, timeout=timeout)
         except FileNotFoundError:
             print(
                 "sentinel-mail: sendmail not found, HTML mail not possible; sending plain text",
