@@ -113,6 +113,81 @@ class StartScript(unittest.TestCase):
         r = self.run_script("--dry-run")
         self.assertIn("plan", r.stdout)
 
+    def test_env_file_writable_by_others_is_refused(self):
+        self.env_file.chmod(0o666)
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("must be owned by root and not group/other-writable", r.stderr)
+
+    @unittest.skipUnless(os.geteuid() == 0, "needs root to create a file owned by someone else")
+    def test_env_file_of_another_owner_is_refused(self):
+        os.chown(self.env_file, 12345, 12345)
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("must be owned by root", r.stderr)
+
+    def test_missing_claude_binary_exits_four(self):
+        self.write_env(f"RESIDENT_CLAUDE={self.tmp}/nonexistent\n")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 4, r.stderr)
+        self.assertIn(f"claude not found at {self.tmp}/nonexistent", r.stderr)
+
+    def test_non_executable_claude_exits_four(self):
+        (self.tmp / "noexec").write_text("x")
+        self.write_env(f"RESIDENT_CLAUDE={self.tmp}/noexec\n")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 4, r.stderr)
+
+    def test_unset_resident_dir_exits_two_with_prefix(self):
+        self.env_file.write_text(f"RESIDENT_CLAUDE={self.bin}/claude\nSENTINEL_ATLAS={self.state}\n")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("start-resident: RESIDENT_DIR", r.stderr)
+
+    def test_missing_resident_dir_exits_two(self):
+        self.write_env(f"RESIDENT_DIR={self.tmp}/gone\n")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("start-resident: RESIDENT_DIR", r.stderr)
+
+    def test_network_log_states_real_maximum(self):
+        stub(self.bin / "curl", "exit 6")
+        r = self.run_script()
+        self.assertIn("150 s", r.stderr)
+        self.assertNotIn("60 s", r.stderr)
+
+    def test_unit_state_dir_wins_over_env_file(self):
+        other = self.tmp / "other"
+        other.mkdir()
+        (other / "RESIDENT-OFF").write_text("")
+        r = self.run_script("--dry-run", SENTINEL_ATLAS=str(other))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("off switch present", r.stderr)
+        self.assertIn(str(other), r.stderr)
+
+    def test_extra_args_in_order_before_prompt(self):
+        self.write_env("RESIDENT_EXTRA_ARGS='--allow-dangerously-skip-permissions --effort high'\n")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout
+        i = out.index("--allow-dangerously-skip-permissions")
+        self.assertLess(out.index("--permission-mode"), i)
+        self.assertLess(i, out.index("--effort"))
+        self.assertLess(out.index("--effort"), out.index("high"))
+        self.assertLess(out.index("high"), out.index("machine"))
+
+    def test_empty_extra_args_add_nothing(self):
+        self.write_env("RESIDENT_EXTRA_ARGS=\n")
+        r = self.run_script("--dry-run")
+        self.assertNotIn("--effort", r.stdout)
+        self.assertNotIn("--allow-dangerously", r.stdout)
+
+    def test_extra_args_with_newline_refused(self):
+        self.write_env("RESIDENT_EXTRA_ARGS='--effort high\n--evil'\n")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("RESIDENT_EXTRA_ARGS", r.stderr)
+
     def test_default_env_path_is_etc_atlas(self):
         self.assertIn("/etc/atlas/resident.env", SCRIPT.read_text())
 
