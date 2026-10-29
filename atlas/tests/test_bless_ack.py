@@ -111,6 +111,36 @@ class TestBless(Case):
         self.assertEqual((self.bus(), self.notice_list()), ([], []))
 
 
+class TestMalformedChannel(Case):
+    """A channel that cannot be parsed never breaks bless/ack: exit codes unchanged, the notice is queued."""
+
+    def test_bless_survives_and_queues(self):
+        self.env["SENTINEL_NOTIFY_CMD"] = "'"
+        self.main("snap", SNAP)
+        rc, _, err = self.main("bless")
+        self.assertEqual(rc, 0)
+        self.assertIn("not notified", err)
+        self.assertEqual(len(list((self.tmp / "runtime" / "outbox").glob("*.json"))), 1)
+
+    def test_ack_survives_and_queues(self):
+        self.env["SENTINEL_NOTIFY_CMD"] = "'"
+        (self.tmp / "ALERT").write_bytes(b"2026-10-29T10:00:00Z\n== ATLAS DRIFT ==\n  x\n")
+        rc, _, err = self.main("ack")
+        self.assertEqual(rc, 0)
+        self.assertIn("not notified", err)
+        self.assertEqual(len(list((self.tmp / "runtime" / "outbox").glob("*.json"))), 1)
+
+    def test_notify_crash_never_escapes(self):
+        self.main("snap", SNAP)
+        m = load(ATLAS / "atlas.py", "atlas_notify_crash", self.env)
+        with mock.patch.object(m.notify, "send_or_queue", side_effect=RuntimeError("boom")), \
+                mock.patch.dict(os.environ, self.env), mock.patch.object(sys, "argv", ["atlas.py", "bless"]), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            rc = m.main()
+        self.assertEqual(rc, 0)
+        self.assertIn("not notified", err.getvalue())
+
+
 class TestAck(Case):
     BODY = b"== ATLAS DRIFT ==\n  + ADDED accounts.bob\n"
 

@@ -37,6 +37,12 @@ class Outbox(unittest.TestCase):
         self.assertEqual((e["v"], e["kind"], e["subject"], e["body"]), (1, "bless", "subj", "body"))
         self.assertEqual(stat.S_IMODE(files[0].stat().st_mode), 0o640)
 
+    def test_malformed_channel_is_a_failed_send_and_queues(self):
+        for bad in ("'", "/nonexistent/notify-cmd"):
+            with mock.patch.dict(os.environ, {"SENTINEL_NOTIFY_CMD": bad}):
+                self.assertEqual(notify.send_or_queue("s", "b", "ack"), "queued")
+        self.assertEqual(len(self.entries()), 2)
+
     def test_sends_when_the_channel_works(self):
         stub = stub_notify(self.d)
         with mock.patch.dict(os.environ, {"SENTINEL_NOTIFY_CMD": str(stub)}):
