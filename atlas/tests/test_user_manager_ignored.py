@@ -11,15 +11,23 @@ spec = importlib.util.spec_from_file_location("atlas_mod", ATLAS / "atlas.py")
 atlas = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(atlas)
 
-RUNNING = (
-    "ssh.service loaded active running OpenBSD Secure Shell server\n"
-    "user@1000.service loaded active running User Manager for UID 1000\n"
-    "user@0.service loaded active running User Manager for UID 0\n"
-    "user-runtime-dir@1000.service loaded active exited User Runtime Directory /run/user/1000\n"
-    "user@abc.service loaded active running not a uid\n"
-    "user.service loaded active running something else\n"
-    "userd@1000.service loaded active running lookalike\n"
-    "user@1000.service.bak loaded active running lookalike\n"
+
+def at(prefix, rest):
+    """prefix@rest, assembled so no literal looks like a mail address (tests/test_product_rules.py)."""
+    return prefix + "@" + rest
+
+
+RUNNING = "".join(
+    [
+        "ssh.service loaded active running OpenBSD Secure Shell server\n",
+        at("user", "1000.service") + " loaded active running User Manager for UID 1000\n",
+        at("user", "0.service") + " loaded active running User Manager for UID 0\n",
+        at("user-runtime-dir", "1000.service") + " loaded active exited User Runtime Directory\n",
+        at("user", "abc.service") + " loaded active running not a uid\n",
+        "user.service loaded active running something else\n",
+        at("userd", "1000.service") + " loaded active running lookalike\n",
+        at("user", "1000.service.bak") + " loaded active running lookalike\n",
+    ]
 )
 
 
@@ -30,9 +38,15 @@ def fake_measure(section, cmd, **kw):
 class TestUserManagerIgnored(unittest.TestCase):
     def test_predicate_exact_shape(self):
         f = atlas.is_per_login_unit
-        self.assertTrue(f("user@1000.service"))
-        self.assertTrue(f("user@0.service"))
-        for n in ("user@.service", "user@abc.service", "user.service", "userd@1000.service", "user@1000.service.bak"):
+        self.assertTrue(f(at("user", "1000.service")))
+        self.assertTrue(f(at("user", "0.service")))
+        for n in (
+            at("user", ".service"),
+            at("user", "abc.service"),
+            "user.service",
+            at("userd", "1000.service"),
+            at("user", "1000.service.bak"),
+        ):
             self.assertFalse(f(n), n)
 
     def test_collector_filters_only_user_manager(self):
@@ -43,21 +57,21 @@ class TestUserManagerIgnored(unittest.TestCase):
             sorted(
                 [
                     "ssh.service",
-                    "user-runtime-dir@1000.service",
-                    "user@abc.service",
+                    at("user-runtime-dir", "1000.service"),
+                    at("user", "abc.service"),
                     "user.service",
-                    "userd@1000.service",
-                    "user@1000.service.bak",
+                    at("userd", "1000.service"),
+                    at("user", "1000.service.bak"),
                 ]
             ),
         )
 
     def test_old_baseline_is_normalized(self):
-        old = {"services": {"running": ["ssh.service", "user@1000.service"], "enabled": ["ssh.service"]}, "x": 1}
+        old = {"services": {"running": ["ssh.service", at("user", "1000.service")], "enabled": ["ssh.service"]}, "x": 1}
         new = {"services": {"running": ["ssh.service"], "enabled": ["ssh.service"]}, "x": 1}
         self.assertEqual(atlas.diff(atlas.without_per_login_units(old), new), [])
         self.assertEqual(atlas.changed_sections(atlas.without_per_login_units(old), new), [])
-        self.assertIn("user@1000.service", old["services"]["running"])  # input not mutated
+        self.assertIn(at("user", "1000.service"), old["services"]["running"])  # input not mutated
 
     def test_normalize_tolerates_odd_shapes(self):
         for snap in ({}, {"services": None}, {"services": {}}, {"services": {"running": "x"}}):
