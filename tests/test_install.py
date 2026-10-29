@@ -67,7 +67,8 @@ class InstallDryRun(unittest.TestCase):
         for u in ("sentinel-stream.service", "sentinel-escalation.service", "sentinel-escalation.timer"):
             self.assertRegex(plan, r"install -m 0644 \S+/%s /etc/systemd/system/%s" % (re.escape(u), re.escape(u)))
         self.assertIn("systemctl daemon-reload", plan)
-        self.assertIn("systemctl enable --now sentinel-stream.service sentinel-escalation.timer", plan)
+        self.assertIn("systemctl enable --now sentinel-stream.service", plan)
+        self.assertIn("systemctl enable --now sentinel-escalation.timer", plan)  # after the first patrol
         self.assertRegex(plan, r"install -m 0440 -o root -g root \S+ /etc/sudoers\.d/atlas")
         self.assertIn("atlas.py snap", plan)
         self.assertIn("atlas.py bless", plan)
