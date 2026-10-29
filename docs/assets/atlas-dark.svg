@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="t">
+  <title id="t">Atlas</title>
+  <!-- Contour lines of a map: three circles (r 176, 120, 64) internally tangent at one point (256,432), like the
+       level sets of a hill. The dot is the summit: the known shape the server is measured against. -->
+  <g fill="none" stroke="#E2E8F0" stroke-width="24">
+    <circle cx="256" cy="256" r="176"/>
+    <circle cx="256" cy="312" r="120"/>
+    <circle cx="256" cy="368" r="64"/>
+  </g>
+  <circle cx="256" cy="368" r="26" fill="#FBBF24"/>
+</svg>
