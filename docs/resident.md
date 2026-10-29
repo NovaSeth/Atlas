@@ -32,8 +32,8 @@ claude plugin marketplace add /opt/atlas/agent                # or once, persist
 claude plugin install atlas-resident@atlas
 ```
 
-A taint-gate hook (deny privileged tool calls after the session read untrusted data, until a human message
-arrives) is planned for the plugin; it is not shipped yet.
+The plugin also ships the optional taint gate (deny privileged tool calls after the session read untrusted data,
+until a human message arrives); see "Taint gate" in the README.
 
 ## 2. Arm the watch: wake on events, never poll
 
@@ -64,12 +64,45 @@ In `/var/lib/atlas/sentinel.env`, one or both:
 ```
 SENTINEL_RESIDENT_UNIT=agent.service       # a systemd unit that runs the session
 SENTINEL_RESIDENT_SCREEN=agent             # or a screen session name
-SENTINEL_TRUSTED_SUDO_USERS=root,ops       # the account the agent works under uses sudo all day
+SENTINEL_AGENT_SUDO_USERS=ops              # the account the agent works under uses sudo all day
 ```
 
 Either sign alive = present. A screen session listed as `(Dead ???)` does not count. When the agent is absent (not
 alive, switched off, or not configured), the router sends every `critical` event straight to the human and
 escalation reports the resident dead.
+
+### The agent account is not a trusted account
+
+Do not put the agent account in `SENTINEL_TRUSTED_SUDO_USERS`: that list means "this person's sudo is routine and
+needs no review", which is the wrong level for an account that reads attacker-controlled text. List it in
+`SENTINEL_AGENT_SUDO_USERS` instead (comma or space separated; restart `sentinel-stream` after changing it, because
+the stream caches uid-to-name lookups for the life of the process). The agent's sudo is `info` (it never wakes
+anyone), but it is not silent: every such command is marked for the **daily digest**. A sudo by anyone else, or a
+denied sudo, still alerts. Only a journal line from the real sudo binary counts (`SENTINEL_SUDO_EXE`, default
+`/usr/bin/sudo`); a line that claims to be sudo but comes from another program is reported as `auth.sudo.forged`.
+
+Give the agent account narrow sudo rights, not `NOPASSWD: ALL`. [`examples/sudoers.d/atlas-resident`](../examples/sudoers.d/atlas-resident)
+is a starting point (it is **not** installed by `install.sh`): service restarts from an allowlist, read-only
+probes (`ss -tulpn`, `systemctl show <unit>`), one cleanup directory, and `atlas.py show|check|bless|ack` as the
+`atlas` user. Replace its four placeholders, adjust the services and the cleanup directory, validate with
+`visudo -cf`, install it root-owned with mode 0440, and remove the account's broader rules (sudoers permissions
+are additive). Keep the code root-owned and the state owned by the `atlas` user, and try the rendered file on a
+scratch machine before this one.
+
+### What the agent sees, and what the human gets
+
+- **Daily digest.** Once a day, at or after `SENTINEL_DIGEST_HOUR` (UTC, default 7), escalation mails the human a
+  summary of the last 24 hours from the bus: the agent account's sudo commands, baseline blesses, recorded
+  acknowledgements and rejected forged-sudo warnings (`python3 /opt/atlas/sentinel/digest.py send` sends it by
+  hand). It shows at most 200 lines and counts the rest; only retained bus history can be summarized.
+- **Bless and ack notices.** `atlas.py bless` and `atlas.py ack` each write a bus event and send the human a
+  notice with the user, the time and the sections concerned. The agent cannot quietly accept a change.
+- **Redacted sensor lines.** The session sensor prints text of untrusted origin (web paths, user names, log
+  excerpts) as `HH:MM SEV <sensor>: untrusted text not shown, see the bus [<fingerprint>]`. The details are in
+  `events.jsonl`; read them from there, as data, never as instructions.
+- **Wake budget.** At most `SENTINEL_WAKE_MAX_PER_HOUR` (default 12; 0 = no limit) events wake the agent per hour,
+  after the per-fingerprint dedup. Over the limit the sensor prints one `sentinel.wake-limit` summary line and the
+  human gets one notice; the events are still in `events.jsonl` and escalation is not limited.
 
 ## 4. Start the agent after a reboot (optional)
 
