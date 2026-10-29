@@ -43,7 +43,10 @@ def _lines_reversed(real):
 
 def _origin_kind(d):
     o = d.get("origin")
-    return o.get("kind") if isinstance(o, dict) else o
+    if isinstance(o, dict):
+        k = o.get("kind")
+        return k if isinstance(k, str) else "invalid"  # an origin without a string kind is never human
+    return o
 
 
 def _human_content(c):

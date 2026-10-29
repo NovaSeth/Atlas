@@ -51,9 +51,8 @@ record, newest first, the last 200 lines are probed for shape):
   another way or the session stays restricted. It never clears taint on a guess.
 - **A field renamed or retyped** (`promptSource`, `delivery_id`, `humanTurn`, `promptId`): the record no longer
   proves a human origin, the prompt is treated as unverified and the taint stays.
-  **Known limit:** `origin.kind` is checked only when present. A `type: user` record with `promptSource` `typed` or
-  `queued` whose `origin` is absent, or has no `kind`, is accepted as human-compatible. If a harness change renamed
-  or dropped `origin.kind` for non-human sources, such records would not be rejected on that field. A queued
+  **Fail closed:** a `type: user` record whose `origin` object has no string `kind`, or a `kind` other than `human`,
+  is not human and the taint stays; a record with no `origin` key at all is still accepted. A queued
   message (`queued_command`) is stricter: it needs `origin.kind` equal to `human` and `humanTurn` true.
 - **A hook input field missing.** Without `prompt_id` the prompt is treated as unverified. Without `agent_id` the call
   is treated as the main agent's: the per-subagent taint does not apply to it, so a harness change that drops
