@@ -363,7 +363,8 @@ class WakeLimiter:
         now = self.clock()
         if self.start is not None and now - self.start >= self.window:
             if self.suppressed and not self.summary_sent:
-                self._closed = (self.suppressed, self.first)
+                old = self._closed  # an earlier closed window nobody collected yet: keep its count
+                self._closed = (self.suppressed + (old[0] if old else 0), old[1] if old else self.first)
             self.start, self.admitted, self.suppressed, self.first = None, 0, 0, ""
             self.summary_sent = False
         return now
@@ -405,7 +406,8 @@ class SharedWakeBudget:
         self.problem = ""  # set once when the state is unusable; the caller prints it
         self._reported = False
         self._mem = None  # in-memory fallback state while the file is unusable
-        self.deadline = None  # when the window this process last saw closes; None = nothing to wait for
+        self.deadline = None  # when to look at the shared state next; None = nothing to wait for
+        self._known = False  # the deadline was taken from the shared state (or from our own admit)
 
     def take_problem(self):
         if self.problem and not self._reported:
@@ -508,28 +510,43 @@ class SharedWakeBudget:
             return result
 
     def _remember(self, lim):
-        self.deadline = lim.start + self.window if lim.start is not None else None
+        self._known = True
+        if lim._closed:  # a closed window's summary is waiting: look at once
+            self.deadline = 0
+        else:
+            self.deadline = lim.start + self.window if lim.start is not None else None
+
+    def _peek(self):
+        """Take the first deadline of a fresh instance from the shared state: one read, no lock, no write.
+        A state that cannot be read makes the summary check due at once, so `_run` reports the problem."""
+        self._known = True
+        try:
+            st = json.loads((self.dir / "wake-budget.json").read_text())
+            if not isinstance(st, dict):
+                raise ValueError("not an object")
+            self._remember(self._limiter(st))
+        except FileNotFoundError:
+            self.deadline = None
+        except (OSError, ValueError, TypeError, IndexError, OverflowError):
+            self.deadline = 0
 
     def admit(self, sensor):
         return self._run(lambda lim: lim.admit(sensor))
 
     def roll(self):
-        """The closed-window summary (count, first sensor) when one is due, else None. Idle polls cost
-        nothing: the shared state is read only once the window this process saw has run out."""
+        """The closed-window summary (count, first sensor) when one is due, else None; each window's summary
+        is handed out once, to whichever process asks first after the window closed. The shared state is read
+        once to learn the deadline (a fresh instance) and again only when that deadline has passed."""
+        if not self._known:
+            self._peek()
         if self.deadline is None or self.clock() < self.deadline:
             return None
         return self._run(lambda lim: lim.roll())
 
     def claim_summary(self):
-        """True for exactly one caller per window with suppressed events (the one who may print the summary)."""
-
-        def op(lim):
-            if lim.suppressed and not lim.summary_sent:
-                lim.summary_sent = True
-                return True
-            return False
-
-        return self._run(op)
+        """True for exactly one caller per window with suppressed events, and only once that window has
+        closed (the one who may print the summary)."""
+        return self.roll() is not None
 
 
 def cmd_follow(args):
@@ -549,7 +566,7 @@ def cmd_follow(args):
             )
         if rolled:
             print(
-                "%s ALERT sentinel.wake-limit: %d event(s) not shown in the last hour (limit %d/h) "
+                "%s ALERT sentinel.wake-limit: %d event(s) not shown in the last hour (limit %d/h), see events.jsonl "
                 "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), rolled[0], limit),
                 flush=True,
             )
@@ -584,7 +601,7 @@ def _replay_seen(seen_file):
     return done, failure
 
 
-def _replay_summary(limiter, suppressed, limit, state_failure):
+def _replay_summary(limiter, limit, state_failure):
     """Print the replay's closing notices (budget problem, unsaved state, suppressed count); returns state_failure."""
     problem = limiter.take_problem() if limiter else ""
     if problem:
@@ -595,10 +612,11 @@ def _replay_summary(limiter, suppressed, limit, state_failure):
         )
     if state_failure:
         print("ATLAS SENSOR: replay state not saved (%s); events may repeat" % state_failure, flush=True)
-    if suppressed and limiter.claim_summary():
+    rolled = limiter.roll() if limiter else None
+    if rolled:  # a window that has closed; one in progress is summed up by whoever runs after it
         print(
             "%s ALERT sentinel.wake-limit: %d more event(s) not shown (limit %d/h), see events.jsonl "
-            "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), suppressed, limit),
+            "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), rolled[0], limit),
             flush=True,
         )
     return state_failure
@@ -623,7 +641,6 @@ def cmd_replay(args):
     data = data[: data.rfind(b"\n") + 1]
     limit = wake_max_per_hour()
     limiter = SharedWakeBudget(limit, wake_state_dir(path)) if limit > 0 else None
-    suppressed = 0
     for ln in data.decode("utf-8", "replace").splitlines():
         ev = _parse(ln)
         if not ev or validate(ev) or ev["severity"] not in ("alert", "critical"):
@@ -638,10 +655,9 @@ def cmd_replay(args):
         except OSError as e:
             state_failure = state_failure or type(e).__name__
         if limiter and not limiter.admit(ev["sensor"]):
-            suppressed += 1
             continue
         print(format_line(ev, args.redact_untrusted), flush=True)
-    state_failure = _replay_summary(limiter, suppressed, limit, state_failure)
+    state_failure = _replay_summary(limiter, limit, state_failure)
     return 1 if state_failure else 0
 
 
