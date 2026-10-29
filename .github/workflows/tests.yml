@@ -16,9 +16,11 @@ jobs:
       matrix:
         python-version: ["3.11", "3.13"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -26,10 +28,16 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq iproute2 git
-          python3 -m pip install --quiet pytest
+          python3 -m pip install --quiet pytest pytest-cov==5.0.0
+
+      - name: Commit subjects
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.sha }}
+        run: bash .github/check-commits.sh "$BASE" "$HEAD"
 
       - name: Unit tests
-        run: python3 -m pytest -q
+        run: python3 -m pytest -q --cov=atlas --cov=sentinel --cov=agent/claude-code/hooks --cov-config=.github/coveragerc --cov-fail-under=60
 
       - name: Shell syntax (bash -n on every tracked *.sh)
         run: |
@@ -44,3 +52,14 @@ jobs:
 
       - name: Installer dry run
         run: ./install.sh --dry-run --code /opt/atlas --state /tmp/atlas-dry --user atlas
+
+  verify-tag:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Verify signed tag
+        run: git -c gpg.ssh.allowedSignersFile=.github/allowed_signers verify-tag "$GITHUB_REF_NAME"
