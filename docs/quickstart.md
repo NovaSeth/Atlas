@@ -441,7 +441,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now atlas-resident.service
 ```
 
-`resident.env` is sourced as shell code: keep it root-owned and not writable by others (the script refuses otherwise).
+`resident.env` is sourced as shell code: it must stay `root:root 0644` (the script refuses otherwise): the human owns the trust level, and the agent account must not be able to raise its own.
 **Choose the trust level before the enable line above.** Set `RESIDENT_PERMISSION_MODE` in `/etc/atlas/resident.env` to `default` (asks you before
 risky actions, answered from the Claude app), `acceptEdits`, `plan` or `bypassPermissions` (acts without asking; also
 needs `--allow-dangerously-skip-permissions` in `RESIDENT_EXTRA_ARGS`). It is empty on purpose: the service refuses to

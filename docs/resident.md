@@ -122,7 +122,7 @@ and stays attachable. This is not an official Claude Code feature; the exact ins
 - `examples/resident/start-resident.sh` - honours `RESIDENT-OFF`, refuses a second session, waits for the network,
   checks the logins, writes `<state>/BOOT`, then starts a fresh session whose first prompt points the agent to
   `AGENTS.md`, `BOOT` and `AFTER-REBOOT.md` and tells it to re-arm the session sensor. `--dry-run` prints what it
-  would do. Exit 2 = bad setup (the env file is sourced as shell code, so it must be root-owned and not writable by group/other), 3 = a login is missing, 4 = `claude` not found.
+  would do. Exit 2 = bad setup (the env file is sourced as shell code and sets the trust level, so it must be a regular file owned by root and not writable by group/other: `root:root 0644`. The human owns the trust level; the agent account must not be able to raise its own), 3 = a login is missing, 4 = `claude` not found.
 
 ### Choose the trust level
 

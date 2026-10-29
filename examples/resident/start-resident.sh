@@ -21,14 +21,17 @@ if [ ! -r "$ENV_FILE" ]; then
     log "env file $ENV_FILE not readable"
     exit 2
 fi
-# The file is sourced as shell code: it must be a regular file that nobody but root (or this account itself,
-# which could run the same code anyway) can write.
+# The file is sourced as shell code and sets the trust level (RESIDENT_PERMISSION_MODE, RESIDENT_EXTRA_ARGS): the
+# agent account must never be able to raise its own trust level. So only a regular file owned by the trusted uid
+# (root, 0) that nobody else can write is accepted. RESIDENT_ENV_TRUSTED_UID is read from this script's own
+# environment BEFORE anything is sourced, so the env file cannot change it; it is set only by a test harness,
+# never in the env file or the unit.
 if [ ! -f "$ENV_FILE" ] || [ -L "$ENV_FILE" ]; then
     log "env file $ENV_FILE must be owned by root and not group/other-writable (it is not a regular file)"
     exit 2
 fi
 read -r env_uid env_mode < <(stat -c '%u %a' "$ENV_FILE")
-if { [ "$env_uid" != 0 ] && [ "$env_uid" != "$(id -u)" ]; } || [ $((8#$env_mode & 8#022)) -ne 0 ]; then
+if [ "$env_uid" != "${RESIDENT_ENV_TRUSTED_UID:-0}" ] || [ $((8#$env_mode & 8#022)) -ne 0 ]; then
     log "env file $ENV_FILE must be owned by root and not group/other-writable"
     exit 2
 fi

@@ -121,11 +121,10 @@ if [ -n "$RUSER" ]; then
         echo 'install.sh: --resident-name may contain only letters, digits and . _ -' >&2; exit 2; }
     RHOME=$(getent passwd "$RUSER" | cut -d: -f6)
     if [ -z "$RHOME" ]; then
-        # dry run only: the conventional home of a not-yet-existing account (written split: no instance paths in code)
-        if [ "$DRY" -eq 1 ]; then RHOME="/ho""me/$RUSER"
+        if [ "$DRY" -eq 1 ]; then RHOME="<home of $RUSER>"
         else echo "install.sh: --resident-user $RUSER does not exist (create the account first)" >&2; exit 2; fi
     fi
-    valid_path "$RHOME" || { echo "install.sh: the home directory of $RUSER has characters outside the path alphabet" >&2; exit 2; }
+    [ "$RHOME" = "<home of $RUSER>" ] || valid_path "$RHOME" || { echo "install.sh: the home directory of $RUSER has characters outside the path alphabet" >&2; exit 2; }
     [ "$PMODE" = bypassPermissions ] && RESIDENT_EXTRA='--allow-dangerously-skip-permissions'
 elif [ -n "$PMODE" ] || [ -n "$RNAME" ]; then
     echo "install.sh: --permission-mode and --resident-name need --resident-user" >&2; exit 2

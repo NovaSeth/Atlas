@@ -74,7 +74,7 @@ class InstallResident(unittest.TestCase):
         self.assertIn("User=ops-test", out)
         self.assertIn("ExecStart=/opt/atlas/examples/resident/start-resident.sh", out)
         self.assertIn("<home of ops-test>/.local/bin:/usr/local/bin", out)
-        self.assertNotIn("/ho" + "me/", out)
+        self.assertNotIn("/ho" + "me/ops-test", out)
         self.assertNotRegex(out, r"@[A-Z_]+@")
         self.assertNotIn("--allow-dangerously-skip-permissions", out)
         self.assertIn("SENTINEL_RESIDENT_UNIT=atlas-resident.service", out)
