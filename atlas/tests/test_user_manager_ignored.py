@@ -2,6 +2,8 @@
 """A23: the per-login user@<uid>.service manager must not show up as drift in services.running."""
 
 import importlib.util
+import json
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -76,6 +78,66 @@ class TestUserManagerIgnored(unittest.TestCase):
     def test_normalize_tolerates_odd_shapes(self):
         for snap in ({}, {"services": None}, {"services": {}}, {"services": {"running": "x"}}):
             self.assertEqual(atlas.without_per_login_units(snap), snap)
+
+    def test_uid_is_bounded(self):
+        self.assertTrue(atlas.is_per_login_unit(at("user", "4294967295.service")))
+        self.assertFalse(atlas.is_per_login_unit(at("user", "99999999999999999999.service")))
+        self.assertFalse(atlas.is_per_login_unit(at("user", "12345678901.service")))
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from test_bless_ack import SNAP, Case  # noqa: E402
+
+
+def with_running(names):
+    snap = json.loads(json.dumps(SNAP))
+    snap["services"] = {"running": sorted(names), "enabled": []}
+    return snap
+
+
+UM = at("user", "1000.service")
+
+
+class TestEndToEnd(Case):
+    """cmd_check and cmd_bless through main(), with a stubbed snapshot and a baseline file."""
+
+    def baseline(self, names):
+        (self.tmp / "baseline.json").write_text(json.dumps(with_running(names)))
+
+    def test_check_running_user_manager_is_no_drift(self):
+        self.baseline(["ssh.service"])
+        rc, out, _ = self.main("check", with_running(["ssh.service", UM]))
+        self.assertEqual(rc, 0, out)
+
+    def test_check_old_baseline_with_user_manager_is_no_removed(self):
+        self.baseline(["ssh.service", UM])
+        rc, out, _ = self.main("check", with_running(["ssh.service"]))
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("REMOVED", out)
+
+    def test_check_normal_service_drifts_both_ways(self):
+        self.baseline(["ssh.service", "old.service"])
+        rc, out, _ = self.main("check", with_running(["ssh.service", "new.service", UM]))
+        self.assertEqual(rc, 1)
+        self.assertIn("ADDED", out)
+        self.assertIn("new.service", out)
+        self.assertIn("REMOVED", out)
+        self.assertIn("old.service", out)
+        self.assertNotIn("user@", out)
+
+    def test_bless_old_baseline_with_user_manager_names_no_section(self):
+        self.baseline(["ssh.service", UM])
+        self.main("snap", with_running(["ssh.service"]))
+        self.assertEqual(self.main("bless")[0], 0)
+        ev = [e for e in self.bus() if e["sensor"] == "atlas.bless"][-1]
+        self.assertEqual(ev["evidence"]["sections"], [])
+
+    def test_bless_normal_service_change_names_services(self):
+        self.baseline(["ssh.service", UM])
+        self.main("snap", with_running(["ssh.service", "new.service"]))
+        self.assertEqual(self.main("bless")[0], 0)
+        ev = [e for e in self.bus() if e["sensor"] == "atlas.bless"][-1]
+        self.assertEqual(ev["evidence"]["sections"], ["services"])
 
 
 if __name__ == "__main__":
