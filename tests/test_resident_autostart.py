@@ -142,7 +142,7 @@ class Templates(unittest.TestCase):
     def test_env_template_keys(self):
         t = ENVTPL.read_text()
         for k in (
-            "RESIDENT_DIR=/home/ops/resident",
+            "RESIDENT_DIR=~/resident",
             "RESIDENT_SESSION=",
             "RESIDENT_NAME=",
             "RESIDENT_PERMISSION_MODE=default",
