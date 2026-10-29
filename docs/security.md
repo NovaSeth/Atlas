@@ -34,9 +34,10 @@ what leaves the host.
   trusted fields, and the session sensor shows attacker-controlled events by sensor name and digest only (see
   *Untrusted input* in [architecture.md](architecture.md#untrusted-input)).
 - *Local unprivileged users.* They can write to the journal and run `sudo` with a command line of their choosing.
-  A `sudo` log line counts only when the journal entry's sender matches: `_EXE` is a configured sudo path
-  (`SENTINEL_SUDO_EXE`, default `/usr/bin/sudo`), `_COMM` is `sudo`, and `_UID` is the invoking user. A mismatch
-  becomes an `auth.sudo.forged` warning instead of a `sudo` event.
+  A `sudo` log line counts only when the journal entry's sender matches: `_EXE` must be a configured sudo path
+  (`SENTINEL_SUDO_EXE`, default `/usr/bin/sudo`) and `_UID` must map to the user named in the message. Only when the
+  entry has no `_EXE` does the check fall back to `_COMM` equal to `sudo`, which is weaker (a process can name
+  itself `sudo`). A mismatch becomes an `auth.sudo.forged` warning instead of a `sudo` event.
 - *A manipulated or compromised agent.* Text from logs can try to steer an attached AI agent. The alerting path
   contains no model, so the human is told regardless. The agent reads raw logs only through a quarantined reader and
   needs a human message before a privileged action once it has read untrusted text (see

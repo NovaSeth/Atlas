@@ -49,10 +49,15 @@ record, newest first, the last 200 lines are probed for shape):
 - **Missing or unrecognised transcript shape.** If none of the last 200 records looks like a transcript record, the
   gate logs `transcript-format-unknown` and keeps the taint: it fails closed. A human then has to be recognised
   another way or the session stays restricted. It never clears taint on a guess.
-- **A field renamed or retyped** (for example `promptSource`, `origin.kind`, `delivery_id`): the record no longer
+- **A field renamed or retyped** (`promptSource`, `delivery_id`, `humanTurn`, `promptId`): the record no longer
   proves a human origin, the prompt is treated as unverified and the taint stays.
-- **A hook input field missing** (`agent_id`, `prompt_id`): the gate treats the call as the main agent, or the
-  prompt as unverified. It does not skip the check.
+  **Known limit:** `origin.kind` is checked only when present. A `type: user` record with `promptSource` `typed` or
+  `queued` whose `origin` is absent, or has no `kind`, is accepted as human-compatible. If a harness change renamed
+  or dropped `origin.kind` for non-human sources, such records would not be rejected on that field. A queued
+  message (`queued_command`) is stricter: it needs `origin.kind` equal to `human` and `humanTurn` true.
+- **A hook input field missing.** Without `prompt_id` the prompt is treated as unverified. Without `agent_id` the call
+  is treated as the main agent's: the per-subagent taint does not apply to it, so a harness change that drops
+  `agent_id` weakens enforcement for subagents: the call is judged by the main session's taint only.
 - **Hook not run at all** (timeout, crash): the shipped `hooks.json` blocks every non-read-only tool on failure
   and lets reads continue; see [resident.md](resident.md#7-safety-untrusted-data).
 
