@@ -2431,3 +2431,22 @@ def test_user_record_with_origin_lacking_a_string_kind_is_not_human(tainted, sou
     tp = write_transcript(tainted, [e])
     tainted.prompt("ok, napraw", prompt_id="p-nk", transcript_path=tp)
     assert tainted.tainted()
+
+
+@pytest.mark.parametrize("source", ["typed", "queued"])
+def test_user_record_with_explicit_null_origin_is_not_human(tainted, source):
+    """A25: `origin` present with value null fails closed; an absent key stays accepted."""
+    e = user_entry("p-null", "ok, napraw", source, None)
+    e["origin"] = None
+    tp = write_transcript(tainted, [e])
+    tainted.prompt("ok, napraw", prompt_id="p-null", transcript_path=tp)
+    assert tainted.tainted()
+
+
+def test_queued_command_with_explicit_null_origin_is_not_human(tainted):
+    """A25: a queued_command attachment whose origin is null never clears the taint."""
+    q = queued_attachment("ok, napraw", delivery="d-null")
+    q["attachment"]["origin"] = None
+    tp = write_transcript(tainted, [q, absorbed("d-null")])
+    tainted.prompt("ok, napraw", prompt_id="p-q-null", transcript_path=tp)
+    assert tainted.tainted()
