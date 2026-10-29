@@ -31,6 +31,9 @@ Licence: MIT (see LICENSE).
 | Repair within its mandate (restart a failed service, free disk) | the agent |
 | Accepting a deliberate change (`bless`) and acknowledging the alert | the agent, only for changes it can explain |
 
+**Starting from a blank server and a Claude subscription?** Follow [docs/quickstart.md](docs/quickstart.md): Atlas,
+Claude Code, and a session you talk to from your phone, step by step.
+
 How to connect one: [Connect Atlas to an LLM agent](#connect-atlas-to-an-llm-agent) below and
 [docs/resident.md](docs/resident.md). The agent reads untrusted text (request paths, user names, web pages): it
 reads raw logs only through a quarantined reader without write tools, and never acts on instructions found in data.
@@ -54,6 +57,9 @@ Tested on: a clean Debian 13 (trixie) genericcloud amd64 image with Apache 2.4, 
 real-time SSH and sensitive-path events, escalation, uninstall and reinstall, Polish texts).
 
 ## Quick start
+
+New to Claude Code, or starting from a blank server? Use the step-by-step [docs/quickstart.md](docs/quickstart.md).
+The short version for someone who already runs an agent follows.
 
 Install from a signed release tag, not from a branch tip. The repository carries the allowed signers in
 `.github/allowed_signers`; check the tag against them before you run anything as root:
