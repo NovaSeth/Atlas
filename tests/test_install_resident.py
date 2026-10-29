@@ -97,6 +97,55 @@ class InstallResident(unittest.TestCase):
         self.assertNotIn("atlas-resident", r.stdout.replace("AI resident (optional)", ""))
         self.assertNotIn("resident.env", r.stdout.split("AI resident (optional)")[0])
 
+    def broken_tree(self, template_text):
+        """A copy of the installer with its examples, and the resident.env template replaced (None = removed)."""
+        tree = self.tmp / "tree"
+        shutil.copytree(ROOT / "examples", tree / "examples")
+        shutil.copytree(ROOT / "sentinel", tree / "sentinel", ignore=shutil.ignore_patterns("tests", "__pycache__"))
+        shutil.copy(INSTALL, tree / "install.sh")
+        env = tree / "examples" / "resident" / "resident.env"
+        env.unlink(missing_ok=True)
+        if template_text is not None:
+            env.write_text(template_text)
+        return tree
+
+    def run_tree(self, tree):
+        return subprocess.run(
+            [
+                "bash",
+                str(tree / "install.sh"),
+                "--dry-run",
+                "--code",
+                "/opt/atlas",
+                "--state",
+                str(self.state),
+                "--user",
+                "atlas-test-nobody",
+                "--resident-user",
+                "ops-test",
+                "--permission-mode",
+                "default",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            stdin=subprocess.DEVNULL,
+        )
+
+    def test_missing_template_is_refused(self):
+        r = self.run_tree(self.broken_tree(None))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("resident.env", r.stderr)
+
+    def test_template_without_permission_line_is_refused(self):
+        r = self.run_tree(self.broken_tree("RESIDENT_NAME=x\n"))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("RESIDENT_PERMISSION_MODE", r.stderr)
+
+    def test_empty_template_is_refused(self):
+        r = self.run_tree(self.broken_tree(""))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+
     def test_uninstall_removes_resident_unit_and_env(self):
         r = subprocess.run(
             ["bash", str(UNINSTALL), "--dry-run", "--state", str(self.state), "--user", "atlas-test-nobody"],

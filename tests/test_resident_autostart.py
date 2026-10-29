@@ -60,7 +60,7 @@ class StartScript(unittest.TestCase):
         e.update(env)
         e = {k: v for k, v in e.items() if v is not None}
         return subprocess.run(
-            ["bash", str(SCRIPT), *args], env=e, capture_output=True, text=True, timeout=30, cwd=self.tmp
+            [shutil.which("bash"), str(SCRIPT), *args], env=e, capture_output=True, text=True, timeout=30, cwd=self.tmp
         )
 
     def test_off_switch_exits_zero_without_exec(self):
@@ -235,11 +235,48 @@ class StartScript(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn(f"--permission-mode {mode} ", r.stdout)
 
+    def minimal_path(self, *omit):
+        """A PATH holding only what the script needs, without the programs named in omit."""
+        d = self.tmp / "minbin"
+        d.mkdir(exist_ok=True)
+        for name in ("stat", "id", "grep", "seq", "cut", "date", "uname", "uptime", "cat"):
+            real = shutil.which(name)
+            if real and not (d / name).exists():
+                (d / name).symlink_to(real)
+        for name in ("claude", "curl", "screen", "sleep"):
+            if name not in omit and not (d / name).exists():
+                (d / name).symlink_to(self.bin / name)
+        return str(d)
+
+    def test_missing_screen_exits_four(self):
+        r = self.run_script("--dry-run", PATH=self.minimal_path("screen"))
+        self.assertEqual(r.returncode, 4, r.stderr)
+        self.assertIn("screen", r.stderr)
+        self.assertIn("not found", r.stderr)
+
+    def test_missing_curl_exits_four_not_network_down(self):
+        r = self.run_script("--dry-run", PATH=self.minimal_path("curl"))
+        self.assertEqual(r.returncode, 4, r.stderr)
+        self.assertIn("curl", r.stderr)
+
+    def test_minimal_path_otherwise_works(self):
+        r = self.run_script("--dry-run", PATH=self.minimal_path())
+        self.assertEqual(r.returncode, 0, r.stderr)
+
     def test_default_env_path_is_etc_atlas(self):
         self.assertIn("/etc/atlas/resident.env", SCRIPT.read_text())
 
 
 class Templates(unittest.TestCase):
+    def test_env_template_is_tracked_by_git(self):
+        r = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "examples/resident/resident.env"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(r.returncode, 0, "resident.env is ignored or untracked: " + r.stderr)
+
     def test_unit_template(self):
         t = UNIT.read_text()
         for needle in (
