@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """sudoers rules mean what the docs say (audit 11) and the agent example is narrow (audit 1a). sudo's ^...$
 arguments are POSIX EREs; the classes used here behave the same in Python's re."""
+
 import os
 import re
 import shutil
@@ -36,15 +37,23 @@ class AuthorizedKeysRules(unittest.TestCase):
     def test_dot_dot_never_matches(self):
         for pat in ak_patterns():
             flag = pat.split()[0].lstrip("^")
-            for bad in ("/home/../root/.ssh/authorized_keys", "/home/./ops/.ssh/authorized_keys",
-                        "//.ssh/authorized_keys", "/home/ops/../../etc/.ssh/authorized_keys"):
+            for bad in (
+                "/home/../root/.ssh/authorized_keys",
+                "/home/./ops/.ssh/authorized_keys",
+                "//.ssh/authorized_keys",
+                "/home/ops/../../etc/.ssh/authorized_keys",
+            ):
                 self.assertIsNone(re.fullmatch(pat, "%s %s" % (flag, bad)), (pat, bad))
 
     def test_real_homes_still_match(self):
         for pat in ak_patterns():
             flag = pat.split()[0].lstrip("^")
-            for good in ("/home/ops/.ssh/authorized_keys", "/root/.ssh/authorized_keys",
-                         "/var/lib/git-user/.ssh/authorized_keys", "/srv/a.b/.ssh/authorized_keys"):
+            for good in (
+                "/home/ops/.ssh/authorized_keys",
+                "/root/.ssh/authorized_keys",
+                "/var/lib/git-user/.ssh/authorized_keys",
+                "/srv/a.b/.ssh/authorized_keys",
+            ):
                 self.assertIsNotNone(re.fullmatch(pat, "%s %s" % (flag, good)), (pat, good))
 
     def test_no_class_mixes_dot_and_slash(self):
@@ -53,8 +62,13 @@ class AuthorizedKeysRules(unittest.TestCase):
 
 class ResidentExample(unittest.TestCase):
     def rendered(self):
-        return (RESIDENT.read_text().replace("@RESIDENT_USER@", "ops").replace("@ATLAS_USER@", "atlas")
-                .replace("@ATLAS_CODE@", "/opt/atlas").replace("@ATLAS_STATE@", "/var/lib/atlas"))
+        return (
+            RESIDENT.read_text()
+            .replace("@RESIDENT_USER@", "ops")
+            .replace("@ATLAS_USER@", "atlas")
+            .replace("@ATLAS_CODE@", "/opt/atlas")
+            .replace("@ATLAS_STATE@", "/var/lib/atlas")
+        )
 
     def test_is_narrow(self):
         r = rules(RESIDENT)

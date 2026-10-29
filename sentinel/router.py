@@ -13,6 +13,7 @@ goes to the human. The human's switch $SENTINEL_ATLAS/RESIDENT-OFF also means ab
 Overridable by env (tests): SENTINEL_STATE_DIR, SENTINEL_ATLAS, SENTINEL_SCREEN_CMD (default
 "screen"), SENTINEL_SYSTEMCTL_CMD (default "systemctl"), SENTINEL_MAIL_CMD (default "mail").
 """
+
 import fcntl
 import json
 import os
@@ -97,13 +98,16 @@ def _load(path):
 
 def _command_notifier(cmd):
     """A notifier for an explicit command (path or command line), used by tests and callers."""
+
     def notify(subject, body):
         try:
-            r = subprocess.run(shlex.split(cmd) + [subject, body], capture_output=True, text=True,
-                               timeout=NOTIFY_TIMEOUT)
+            r = subprocess.run(
+                shlex.split(cmd) + [subject, body], capture_output=True, text=True, timeout=NOTIFY_TIMEOUT
+            )
             return r.returncode == 0
         except (OSError, subprocess.TimeoutExpired):
             return False
+
     return notify
 
 
@@ -119,6 +123,7 @@ def route(event, state_path=None, notify=None, presence=None, now=None):
     now = time.time() if now is None else now
     state_path = Path(state_path) if state_path else default_state_path()
     if notify is None:
+
         def notify(subject, body):
             # sent or queued (the escalation timer delivers the outbox) counts as handed off
             return _notify.send_or_queue(subject, body, "router") in ("sent", "queued")
@@ -199,13 +204,21 @@ class WakeWatch:
 
     def _announce(self, sensor):
         try:
-            self.notify_fn(t("router.wake_limit_subject", limit=self.max),
-                           t("router.wake_limit_body", limit=self.max, sensor=sensor))
+            self.notify_fn(
+                t("router.wake_limit_subject", limit=self.max),
+                t("router.wake_limit_body", limit=self.max, sensor=sensor),
+            )
         except Exception as e:
             print("sentinel-router: wake-limit notice failed: %s" % e, file=sys.stderr, flush=True)
         try:
-            self.emit_fn({"sensor": "sentinel.wake-limit", "severity": "warning", "confidence": "measured",
-                          "what": "wake limit %d/h reached" % self.max,
-                          "fingerprint": "sentinel.wake-limit:reached"})
+            self.emit_fn(
+                {
+                    "sensor": "sentinel.wake-limit",
+                    "severity": "warning",
+                    "confidence": "measured",
+                    "what": "wake limit %d/h reached" % self.max,
+                    "fingerprint": "sentinel.wake-limit:reached",
+                }
+            )
         except Exception as e:
             print("sentinel-router: wake-limit event failed: %s" % e, file=sys.stderr, flush=True)

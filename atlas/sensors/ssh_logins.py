@@ -17,6 +17,7 @@ is older than the 24 h window. The fingerprint contains no time: auth.ssh.accept
 Read-only, zero network, zero LLM. Overridable ONLY for tests:
 SSH_JOURNAL_CMD, SSH_KNOWN_IPS, SSH_WINDOW_H.
 """
+
 import json
 import os
 import re
@@ -34,7 +35,9 @@ from i18n import t  # noqa: E402
 from untrusted import clean  # noqa: E402
 
 envfile.load(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE))
-KNOWN = os.environ.get("SSH_KNOWN_IPS", os.path.join(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE), "known-ips.txt"))
+KNOWN = os.environ.get(
+    "SSH_KNOWN_IPS", os.path.join(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE), "known-ips.txt")
+)
 WINDOW_H = float(os.environ.get("SSH_WINDOW_H", "24"))
 COMMAND = os.environ.get("SSH_JOURNAL_CMD", "sudo -n journalctl -u ssh --since -24h -o short-iso --no-pager")
 PATTERN = re.compile(r"^(\S+) \S+ \S+: Accepted (\S+) for (\S+) from (\S+) port \d+")
@@ -93,16 +96,21 @@ def main():
         if text_mode:
             print(t("ssh.login_line", ip=ip, user=user, method=method, when=when))
         else:
-            print(json.dumps({
-                "ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "sensor": "auth.ssh.accepted-login",
-                "severity": "critical",
-                "confidence": "measured",
-                "what": "successful SSH login from an unknown IP",
-                "evidence": {"ip": ip, "user": user, "when": when, "method": method},
-                "command": "sudo journalctl -u ssh --since -24h | grep 'Accepted '",
-                "fingerprint": f"auth.ssh.accepted:{ip}:{user}",
-            }, ensure_ascii=False))
+            print(
+                json.dumps(
+                    {
+                        "ts": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        "sensor": "auth.ssh.accepted-login",
+                        "severity": "critical",
+                        "confidence": "measured",
+                        "what": "successful SSH login from an unknown IP",
+                        "evidence": {"ip": ip, "user": user, "when": when, "method": method},
+                        "command": "sudo journalctl -u ssh --since -24h | grep 'Accepted '",
+                        "fingerprint": f"auth.ssh.accepted:{ip}:{user}",
+                    },
+                    ensure_ascii=False,
+                )
+            )
     return 1 if ev else 0
 
 

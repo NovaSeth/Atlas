@@ -1,4 +1,5 @@
 """Shell words and operators, including quoted text, substitutions and heredocs."""
+
 import re
 import tg_core
 
@@ -6,8 +7,28 @@ import tg_core
 SEPARATORS = frozenset({";", "&", "&&", "||", "|", "|&"})
 
 
-OPERATORS = ("&>>", "<<<", "&&", "||", "|&", ";;", "&>", ">>", ">|", "<<", "<>", ">&", "<&",
-             "|", "&", ";", "<", ">", "(", ")")
+OPERATORS = (
+    "&>>",
+    "<<<",
+    "&&",
+    "||",
+    "|&",
+    ";;",
+    "&>",
+    ">>",
+    ">|",
+    "<<",
+    "<>",
+    ">&",
+    "<&",
+    "|",
+    "&",
+    ";",
+    "<",
+    ">",
+    "(",
+    ")",
+)
 
 
 class Word:
@@ -65,7 +86,7 @@ def tokenize(s):
             if j < 0:
                 raise tg_core.ParseError("quote")
             word = word or Word()
-            word.add(s[i + 1:j], True)
+            word.add(s[i + 1 : j], True)
             i = j + 1
             continue
         if c == '"':
@@ -169,4 +190,3 @@ def segments_with_sep(toks):
 
 def words_of(seg):
     return [v.text() for k, v in seg if k == "w"]
-

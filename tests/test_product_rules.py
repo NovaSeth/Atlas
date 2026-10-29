@@ -5,6 +5,7 @@ GC1: no host data in tracked files (documentation IPs, example mail domains, fak
 GC2: the runtime is stdlib-only: every import in product code is the standard library or an own module.
 Shared contract (A1): catalog keys in both languages, sentinel.env keys, ignored runtime directory.
 """
+
 import ast
 import ipaddress
 import json
@@ -15,23 +16,46 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TRACKED = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True,
-                         check=True).stdout.split()
-DOC_NETS = [ipaddress.ip_network(n) for n in (
-    "192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "127.0.0.0/8", "0.0.0.0/32", "1.2.3.4/32")]
+TRACKED = subprocess.run(
+    ["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True, check=True
+).stdout.split()
+DOC_NETS = [
+    ipaddress.ip_network(n)
+    for n in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24", "127.0.0.0/8", "0.0.0.0/32", "1.2.3.4/32")
+]
 FAKE_HOMES = {"tester", "mallory", "ops", "newuser", "alice", "bob", "user"}
 MAIL_OK = re.compile(r"@(example\.(com|org|net)|[a-z0-9-]+\.example)$")
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])")
 MAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 HOME = re.compile(r"/home/([A-Za-z0-9_][A-Za-z0-9._-]*)")
 PRODUCT_DIRS = ("atlas/", "sentinel/", "agent/claude-code/hooks/", "agent/claude-code/bin/")
-NEW_KEYS = ("atlas.no_baseline", "atlas.bless_subject", "atlas.bless_body", "atlas.bless_first",
-            "atlas.ack_subject", "atlas.ack_body", "atlas.ack_nothing", "atlas.ack_raced",
-            "atlas.notify_not_sent", "esc.ack_unrecorded_subject", "esc.ack_unrecorded",
-            "esc.unsafe_state_subject", "esc.unsafe_state", "router.wake_limit_subject",
-            "router.wake_limit_body", "digest.subject", "digest.header", "digest.more")
-NEW_ENV = ("SENTINEL_AGENT_SUDO_USERS", "SENTINEL_DIGEST_HOUR", "SENTINEL_SUDO_EXE",
-           "SENTINEL_WAKE_MAX_PER_HOUR", "SENTINEL_HEARTBEAT_URL")
+NEW_KEYS = (
+    "atlas.no_baseline",
+    "atlas.bless_subject",
+    "atlas.bless_body",
+    "atlas.bless_first",
+    "atlas.ack_subject",
+    "atlas.ack_body",
+    "atlas.ack_nothing",
+    "atlas.ack_raced",
+    "atlas.notify_not_sent",
+    "esc.ack_unrecorded_subject",
+    "esc.ack_unrecorded",
+    "esc.unsafe_state_subject",
+    "esc.unsafe_state",
+    "router.wake_limit_subject",
+    "router.wake_limit_body",
+    "digest.subject",
+    "digest.header",
+    "digest.more",
+)
+NEW_ENV = (
+    "SENTINEL_AGENT_SUDO_USERS",
+    "SENTINEL_DIGEST_HOUR",
+    "SENTINEL_SUDO_EXE",
+    "SENTINEL_WAKE_MAX_PER_HOUR",
+    "SENTINEL_HEARTBEAT_URL",
+)
 
 
 def texts():
@@ -56,13 +80,21 @@ class Privacy(unittest.TestCase):
         self.assertEqual(bad, [])
 
     def test_mail_addresses_use_example_domains(self):
-        bad = ["%s: %s" % (rel, m.group(0)) for rel, text in texts() for m in MAIL.finditer(text)
-               if not MAIL_OK.search(m.group(0).lower())]
+        bad = [
+            "%s: %s" % (rel, m.group(0))
+            for rel, text in texts()
+            for m in MAIL.finditer(text)
+            if not MAIL_OK.search(m.group(0).lower())
+        ]
         self.assertEqual(bad, [])
 
     def test_home_directories_are_fake(self):
-        bad = ["%s: /home/%s" % (rel, m.group(1)) for rel, text in texts() for m in HOME.finditer(text)
-               if m.group(1) not in FAKE_HOMES]
+        bad = [
+            "%s: /home/%s" % (rel, m.group(1))
+            for rel, text in texts()
+            for m in HOME.finditer(text)
+            if m.group(1) not in FAKE_HOMES
+        ]
         self.assertEqual(bad, [])
 
 
@@ -107,8 +139,9 @@ class SharedContract(unittest.TestCase):
         self.assertRegex(text, r"(?m)^SENTINEL_WAKE_MAX_PER_HOUR=12$")
 
     def test_runtime_dir_next_to_the_code_is_ignored(self):
-        r = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "atlas/runtime/escalation.log"],
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            ["git", "-C", str(ROOT), "check-ignore", "atlas/runtime/escalation.log"], capture_output=True, text=True
+        )
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 

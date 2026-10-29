@@ -1,4 +1,5 @@
 """Hook decisions and subagent bookkeeping; human evidence is resolved lazily."""
+
 import json
 import os
 import sys
@@ -9,9 +10,17 @@ import tg_state
 
 
 def deny(reason):
-    sys.stdout.write(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse", "permissionDecision": "deny",
-        "permissionDecisionReason": reason}}))
+    sys.stdout.write(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": reason,
+                }
+            }
+        )
+    )
     sys.stdout.flush()
 
 
@@ -26,6 +35,7 @@ def format_hint_active(state):
         return False
     try:
         import calendar
+
         age = time.time() - calendar.timegm(time.strptime(at, "%Y-%m-%dT%H:%M:%SZ"))
     except (ValueError, OverflowError):
         return False
@@ -66,8 +76,11 @@ def pre_tool_use(data):
         return
     if not launch_allowed(tool, ti):
         tg_state.log(sid, "PreToolUse", tool, "deny", "subagent-not-allowed")
-        deny(tg_core.SUBAGENT_LAUNCH_DENY_TEXT.format(allowed=", ".join(tg_state.safe_token(x, 64) for x in
-                                                               tg_state.config()["subagent_allowlist"])))
+        deny(
+            tg_core.SUBAGENT_LAUNCH_DENY_TEXT.format(
+                allowed=", ".join(tg_state.safe_token(x, 64) for x in tg_state.config()["subagent_allowlist"])
+            )
+        )
         return
     if is_subagent(data):
         subagent_pre_tool_use(data, tool, ti, cwd)
@@ -86,8 +99,7 @@ def pre_tool_use(data):
         return
     allowed = tg_classify.tainted_allows(tool, ti) if state.gated else True
     if not allowed:
-        tg_state.log(sid, "PreToolUse", tool, "deny", "unknown-" + state.unknown if state.unknown
-            else "tainted")
+        tg_state.log(sid, "PreToolUse", tool, "deny", "unknown-" + state.unknown if state.unknown else "tainted")
         deny_state(state)
         return
     latent = []
@@ -107,6 +119,7 @@ def pre_tool_use(data):
 def _resolve_pending(state, sid, event):
     if state.gated and state.unknown is None and state.data.get("pending_human"):
         import tg_provenance
+
         with state:
             tg_provenance.resolve_pending_human(state, sid, event)
 
@@ -119,13 +132,20 @@ def _mark_source(state, sid, tool, ti, cwd, tuid, source):
             targets = tg_classify.write_targets(ti.get("command") or "", cwd)
             if targets:
                 state.add_artifacts(targets)
-                unrecorded = [t for t in targets if tg_classify.is_artifact(os.path.realpath(t)) != "artifact"
-                              and tg_classify.is_artifact(t) != "artifact"]
+                unrecorded = [
+                    t
+                    for t in targets
+                    if tg_classify.is_artifact(os.path.realpath(t)) != "artifact"
+                    and tg_classify.is_artifact(t) != "artifact"
+                ]
     if ok and unrecorded:
         # a copy of untrusted data whose destination cannot be remembered would lose its provenance
         tg_state.log(sid, "PreToolUse", tool, "deny", "artifact-registry-full")
-        deny(tg_core.DENY_TEXT.format(source=source + " (copy destination cannot be recorded: registry full)",
-                              since=tg_core.now_iso()))
+        deny(
+            tg_core.DENY_TEXT.format(
+                source=source + " (copy destination cannot be recorded: registry full)", since=tg_core.now_iso()
+            )
+        )
         return
     if ok:
         tg_state.log(sid, "PreToolUse", tool, "taint", source)
@@ -151,6 +171,7 @@ def post_tool_use(data):
     with state:
         if state.gated and state.unknown is None and state.data.get("pending_human"):
             import tg_provenance
+
             tg_provenance.resolve_pending_human(state, sid, "PostToolUse")
         src = state.pending().get(tuid) if tuid else None
         src = src or (tg_classify.tool_source(tool, ti, cwd) if isinstance(ti, dict) else None)
@@ -171,7 +192,7 @@ NOTIFICATION_HEAD = tg_core.Lazy(r"\s*<task-notification>\s*<task-id>([A-Za-z0-9
 
 
 def _agent_flag(state, aid):
-    return "%s.agent-%s.tainted" % (state.path[:-len(".json")], aid)
+    return "%s.agent-%s.tainted" % (state.path[: -len(".json")], aid)
 
 
 def _touch_agent_flag(state, aid):
@@ -200,8 +221,10 @@ def agent_tainted(state, aid):
     if aid in m:
         e = m[aid] if isinstance(m[aid], dict) else {}
         since = e.get("since")
-        return (tg_state.safe_token(e.get("source"), 32),
-                since if isinstance(since, str) and tg_state.ISO_TIME.fullmatch(since) else "unknown time")
+        return (
+            tg_state.safe_token(e.get("source"), 32),
+            since if isinstance(since, str) and tg_state.ISO_TIME.fullmatch(since) else "unknown time",
+        )
     if len(m) >= tg_core.AGENT_TAINT_MAX:
         return "state unknown", tg_core.now_iso()
     return None
@@ -257,7 +280,11 @@ def subagent_pre_tool_use(data, tool, ti, cwd):
     if not ok:
         tg_state.log(sid, "PreToolUse", tool, "taint-failed", src or "nested-agent")
         if tool not in tg_core.ALWAYS_READ_ONLY:  # never run what we cannot remember
-            deny(tg_core.SUBAGENT_DENY_TEXT.format(source=(src or "nested-agent") + " (not persisted)", since=tg_core.now_iso()))
+            deny(
+                tg_core.SUBAGENT_DENY_TEXT.format(
+                    source=(src or "nested-agent") + " (not persisted)", since=tg_core.now_iso()
+                )
+            )
 
 
 def post_bookkeeping(state, data, tool, ti):
@@ -274,8 +301,7 @@ def post_bookkeeping(state, data, tool, ti):
         types = dict(state.data.get("agent_types") or {})
         types[aid] = tg_state.safe_token(ti.get("subagent_type"), 64)
         state.update(agent_types=types)
-    asynchronous = isinstance(resp, dict) and (resp.get("isAsync") is True
-                                               or resp.get("status") == "async_launched")
+    asynchronous = isinstance(resp, dict) and (resp.get("isAsync") is True or resp.get("status") == "async_launched")
     if not asynchronous:
         judge_agent_result(state, data.get("session_id"), aid, None, "PostToolUse")
 
@@ -311,7 +337,7 @@ def notification_agent(prompt):
     if not m:
         return None, None
     head_end = prompt.find("<result>", m.end())
-    head = prompt[m.end():head_end if head_end >= 0 else len(prompt)]
+    head = prompt[m.end() : head_end if head_end >= 0 else len(prompt)]
     f = OUTPUT_FILE.search(head)
     return m.group(1), (os.path.normpath(f.group(1)) if f else None)
 
@@ -334,6 +360,7 @@ TRANSCRIPT_WAIT_S = 0.2
 def user_prompt_submit(data):
     """Clear the taint ONLY on verified, fresh, unused human evidence ; judge agent completions."""
     import tg_provenance
+
     sid = data.get("session_id")
     if tg_state.switch_on():
         tg_state.log(sid, "UserPromptSubmit", "-", "keep", "switch-off")
@@ -348,9 +375,14 @@ def user_prompt_submit(data):
         _consume_clean_prompt(state, data, prompt, aid)
         return
     after = state.data.get("marked_at") if state.unknown is None else None
-    used = frozenset(e for e in (state.data.get("used_evidence") or []) if isinstance(e, str)) \
-        if state.unknown is None else frozenset()
-    origin, eid, ts = tg_provenance.transcript_origin(data, after, used) if isinstance(prompt, str) else (None, None, None)
+    used = (
+        frozenset(e for e in (state.data.get("used_evidence") or []) if isinstance(e, str))
+        if state.unknown is None
+        else frozenset()
+    )
+    origin, eid, ts = (
+        tg_provenance.transcript_origin(data, after, used) if isinstance(prompt, str) else (None, None, None)
+    )
     if origin == "format-unknown":
         tg_state.log(sid, "UserPromptSubmit", "-", "keep", "transcript-format-unknown")
         if state.path is not None and state.unknown is None:
@@ -360,8 +392,9 @@ def user_prompt_submit(data):
     if origin != "human":  # verified human provenance wins, even over notification-shaped text
         if _defer_prompt(state, data, sid, prompt, aid, origin):
             return
-        tg_state.log(sid, "UserPromptSubmit", "-", "keep",
-            "not-human" if origin == "other" or aid else "unverified-origin")
+        tg_state.log(
+            sid, "UserPromptSubmit", "-", "keep", "not-human" if origin == "other" or aid else "unverified-origin"
+        )
         return
     if state.path is None:
         tg_state.log(sid, "UserPromptSubmit", "-", "keep", "unknown-" + (state.unknown or "x"))
@@ -379,6 +412,7 @@ def user_prompt_submit(data):
 
 def _consume_clean_prompt(state, data, prompt, aid):
     import tg_provenance
+
     # Consume this human message's own evidence even in a clean session, so the record cannot later
     # authenticate an automated prompt with identical text (single lookup, no retries).
     if isinstance(prompt, str) and state.path is not None and state.unknown is None and not aid:
@@ -389,11 +423,12 @@ def _consume_clean_prompt(state, data, prompt, aid):
                 used = [e for e in (state.data.get("used_evidence") or []) if isinstance(e, str)]
                 if eid0 not in used:
                     used.append(eid0)
-                    state.update(used_evidence=used[-tg_core.EVIDENCE_MAX:])
+                    state.update(used_evidence=used[-tg_core.EVIDENCE_MAX :])
 
 
 def _defer_prompt(state, data, sid, prompt, aid, origin):
     import tg_provenance
+
     if origin is None and not aid and isinstance(prompt, str):
         real = tg_provenance._transcript_real(data.get("transcript_path"))
         pid = data.get("prompt_id")
@@ -401,11 +436,16 @@ def _defer_prompt(state, data, sid, prompt, aid, origin):
             with state:
                 if state.unknown is None and state.tainted:
                     items = [i for i in (state.data.get("pending_human") or []) if isinstance(i, dict)]
-                    items.append({"pid": pid, "sha256": tg_provenance._text_hash(prompt), "transcript": real,
-                                  "at": tg_core.now_iso_ms()})
+                    items.append(
+                        {
+                            "pid": pid,
+                            "sha256": tg_provenance._text_hash(prompt),
+                            "transcript": real,
+                            "at": tg_core.now_iso_ms(),
+                        }
+                    )
                     if state.update(pending_human=items[-PENDING_HUMAN_MAX:]):
                         tg_state.log(sid, "UserPromptSubmit", "-", "keep", "unverified-origin")
                         tg_state.log(sid, "UserPromptSubmit", "-", "keep", "deferred-human-pending")
                         return True
     return False
-

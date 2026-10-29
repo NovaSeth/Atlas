@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """atlas.py runs no shell (audit 12), a failed command is never a value (audit 19), sections come from a registry
 with an explicit error collector (audit 18), limits are named (audit 20), main is a table (audit 17)."""
+
 import ast
 import importlib.util
 import os
@@ -29,7 +30,9 @@ class NoShell(unittest.TestCase):
         self.a = load()
 
     def test_no_shell_true_in_product_code(self):
-        for p in list(ATLAS.glob("*.py")) + list((ATLAS / "sensors").glob("*.py")) + list((ROOT / "sentinel").glob("*.py")):
+        for p in (
+            list(ATLAS.glob("*.py")) + list((ATLAS / "sensors").glob("*.py")) + list((ROOT / "sentinel").glob("*.py"))
+        ):
             self.assertNotIn("shell=True", p.read_text(), p.name)
 
     def test_run_checked_passes_an_argv_list(self):
@@ -74,16 +77,34 @@ class NoShell(unittest.TestCase):
         self.assertIn("host", errs)
 
     def test_vitals_failure_is_a_question_mark_with_a_reason(self):
-        with mock.patch.object(self.a, "run", return_value=None), \
-                mock.patch.object(self.a, "silent_failures_checked", return_value=({}, {})):
+        with (
+            mock.patch.object(self.a, "run", return_value=None),
+            mock.patch.object(self.a, "silent_failures_checked", return_value=({}, {})),
+        ):
             v = self.a.vitals()
         self.assertEqual(v["disk_used_pct"], "?")
         self.assertIn("disk", v["vitals_errors"])
 
     def test_sections_registry_keeps_the_order(self):
-        self.assertEqual(list(self.a.SECTIONS), ["services", "timers", "listeners", "containers", "accounts",
-                                                 "sudoers", "vhosts", "crontabs", "packages", "setuid",
-                                                 "sensitive_files", "firewall", "apt_sources", "vitals"])
+        self.assertEqual(
+            list(self.a.SECTIONS),
+            [
+                "services",
+                "timers",
+                "listeners",
+                "containers",
+                "accounts",
+                "sudoers",
+                "vhosts",
+                "crontabs",
+                "packages",
+                "setuid",
+                "sensitive_files",
+                "firewall",
+                "apt_sources",
+                "vitals",
+            ],
+        )
 
     def test_explicit_error_collector(self):
         errs = {}
@@ -94,7 +115,10 @@ class NoShell(unittest.TestCase):
 
     def test_main_is_a_dispatch_table_and_unknown_runs_check(self):
         self.assertEqual(set(self.a.COMMANDS), {"bless", "ack", "thresholds", "silent", "snap", "show", "check"})
-        with mock.patch.dict(self.a.COMMANDS, {"check": lambda: 7}), mock.patch.object(sys, "argv", ["atlas.py", "nonsense"]):
+        with (
+            mock.patch.dict(self.a.COMMANDS, {"check": lambda: 7}),
+            mock.patch.object(sys, "argv", ["atlas.py", "nonsense"]),
+        ):
             self.assertEqual(self.a.main(), 7)
 
     def test_named_limits_only(self):
@@ -104,8 +128,11 @@ class NoShell(unittest.TestCase):
 
     def test_functions_are_short(self):
         tree = ast.parse((ATLAS / "atlas.py").read_text())
-        long_ = [(n.name, n.end_lineno - n.lineno + 1) for n in ast.walk(tree)
-                 if isinstance(n, ast.FunctionDef) and n.end_lineno - n.lineno + 1 > 50]
+        long_ = [
+            (n.name, n.end_lineno - n.lineno + 1)
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.end_lineno - n.lineno + 1 > 50
+        ]
         self.assertEqual(long_, [])
 
 
@@ -114,9 +141,15 @@ class SshSensorNoShell(unittest.TestCase):
         d = Path(tempfile.mkdtemp(prefix="ssh-noshell-"))
         canary = d / "canary"
         (d / "known.txt").write_text("198.51.100.4\n")
-        env = dict(os.environ, SSH_JOURNAL_CMD="cat %s; touch %s" % (d / "j.log", canary),
-                   SSH_KNOWN_IPS=str(d / "known.txt"))
-        r = subprocess.run([sys.executable, str(ATLAS / "sensors" / "ssh_logins.py")], env=env,
-                           capture_output=True, text=True, timeout=30)
+        env = dict(
+            os.environ, SSH_JOURNAL_CMD="cat %s; touch %s" % (d / "j.log", canary), SSH_KNOWN_IPS=str(d / "known.txt")
+        )
+        r = subprocess.run(
+            [sys.executable, str(ATLAS / "sensors" / "ssh_logins.py")],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         self.assertFalse(canary.exists())
         self.assertEqual(r.returncode, 2)

@@ -1,4 +1,5 @@
 """The agent package: AGENTS.md (any harness) and the Claude Code plugin under agent/claude-code/."""
+
 import json
 import re
 import unittest
@@ -28,7 +29,7 @@ def frontmatter(path):
 def procedure(path):
     text = path.read_text()
     a, b = text.find(START), text.find(END)
-    return text[a + len(START):b].strip() if 0 <= a < b else ""
+    return text[a + len(START) : b].strip() if 0 <= a < b else ""
 
 
 class PluginManifestTests(unittest.TestCase):
@@ -57,8 +58,17 @@ class SkillAndAgentTests(unittest.TestCase):
 
     def test_log_reader_output_contract(self):
         text = LOG_READER.read_text()
-        for key in ("source", "window", "counts", "top_ips", "status_codes", "paths", "user_agent_classes",
-                    "injection_suspected", "injection_examples_redacted"):
+        for key in (
+            "source",
+            "window",
+            "counts",
+            "top_ips",
+            "status_codes",
+            "paths",
+            "user_agent_classes",
+            "injection_suspected",
+            "injection_examples_redacted",
+        ):
             self.assertIn(key, text)
         self.assertIn("untrusted", text.lower())
 

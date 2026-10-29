@@ -38,6 +38,7 @@ Optional extra signal: if ATLAS_INJECTION_CLASSIFIER_CMD is set, it is run for e
 the raw text, exit 1 = suspicious, 2 s timeout, any other outcome ignored). Off by default; no
 network, no model unless the operator installs one locally.
 """
+
 import base64
 import binascii
 import os
@@ -60,15 +61,18 @@ _NON_PRINTABLE = re.compile(r"[^\x20-\x7e]")
 
 # Zero-width and bidi controls: invisible to a human reading a terminal, visible to a model.
 INVISIBLE = frozenset(
-    [chr(c) for c in range(0x200B, 0x2010)]      # ZWSP, ZWNJ, ZWJ, LRM, RLM
-    + [chr(c) for c in range(0x202A, 0x202F)]    # LRE, RLE, PDF, LRO, RLO
-    + [chr(c) for c in range(0x2060, 0x2065)]    # WJ, invisible operators
-    + [chr(c) for c in range(0x2066, 0x206A)]    # LRI, RLI, FSI, PDI
-    + ["\ufeff", "\u061c", "\u180e"])
+    [chr(c) for c in range(0x200B, 0x2010)]  # ZWSP, ZWNJ, ZWJ, LRM, RLM
+    + [chr(c) for c in range(0x202A, 0x202F)]  # LRE, RLE, PDF, LRO, RLO
+    + [chr(c) for c in range(0x2060, 0x2065)]  # WJ, invisible operators
+    + [chr(c) for c in range(0x2066, 0x206A)]  # LRI, RLI, FSI, PDI
+    + ["\ufeff", "\u061c", "\u180e"]
+)
 
 _AI = r"(?:ai|llm|assistant|agent|model|bot|claude|gpt|chatgpt|copilot|gemini|resident)"
-_CMD_WORD = (r"(?:sudo|su|curl|wget|bash|sh|zsh|rm|chmod|chown|python3?|perl|nc|ncat|socat|systemctl|"
-             r"crontab|ssh|scp|touch|echo|cat|dd|mkfs|useradd|usermod|passwd|iptables|ufw|atlas|bless)")
+_CMD_WORD = (
+    r"(?:sudo|su|curl|wget|bash|sh|zsh|rm|chmod|chown|python3?|perl|nc|ncat|socat|systemctl|"
+    r"crontab|ssh|scp|touch|echo|cat|dd|mkfs|useradd|usermod|passwd|iptables|ufw|atlas|bless)"
+)
 
 RULES = {
     "override": [
@@ -89,8 +93,7 @@ RULES = {
         r"(?:instructions?|directives?|prompt)\b",
     ],
     "addressed": [
-        r"\b(?:dear|hey|hello|attention|(?:note|message|instructions?)\s+(?:to|for)(?:\s+the)?)\s+"
-        + _AI + r"\b",
+        r"\b(?:dear|hey|hello|attention|(?:note|message|instructions?)\s+(?:to|for)(?:\s+the)?)\s+" + _AI + r"\b",
         r"\b(?:ai|llm)\s+(?:agent|assistant|model)s?\s*[:,]?\s+(?:please\s+)?"
         r"(?:run|execute|delete|remove|send|ignore|disable|stop|reveal|print|install|create|add|write|"
         r"bless|ack|acknowledge)\b",
@@ -132,7 +135,7 @@ def clean(text, limit=DEFAULT_LIMIT):
     s = _WS.sub(" ", s).strip()
     s = _NON_PRINTABLE.sub("?", s)
     if len(s) > limit:
-        s = s[:limit - 3] + "..." if limit > 3 else s[:limit]
+        s = s[: limit - 3] + "..." if limit > 3 else s[:limit]
     return s
 
 
@@ -207,8 +210,13 @@ def _classifier(raw):
     if not cmd:
         return False
     try:
-        p = subprocess.Popen(shlex.split(cmd), stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, start_new_session=True)
+        p = subprocess.Popen(
+            shlex.split(cmd),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
     except (OSError, ValueError):
         return False
     try:

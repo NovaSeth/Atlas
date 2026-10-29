@@ -1,4 +1,5 @@
 """Untrusted-source classification, write destinations and the tainted read-only policy."""
+
 import os
 import re
 import tg_core
@@ -17,7 +18,7 @@ def path_source(path):
     if path == tg_core.QUARANTINE_DIR or path.startswith(tg_core.QUARANTINE_DIR + "/"):
         return "quarantine"
     if path.startswith(tg_core.ATLAS_STATE + "/"):
-        rest = path[len(tg_core.ATLAS_STATE) + 1:]
+        rest = path[len(tg_core.ATLAS_STATE) + 1 :]
         if rest.startswith("events.jsonl"):
             return "atlas-events"
         if rest == "drift.log":
@@ -39,9 +40,11 @@ def ancestor_source(path):
     """A directory that contains a source (e.g. Grep over /var or /)."""
     if path == "/":
         return "var-log"
-    for root, code in (("/var/log", "var-log"), (tg_core.QUARANTINE_DIR, "quarantine"),
-                       (tg_core.ATLAS_STATE, "atlas-events")) + tuple(
-                           (r, "extra-path") for r in tg_state.config()["extra_untrusted_paths"]):
+    for root, code in (
+        ("/var/log", "var-log"),
+        (tg_core.QUARANTINE_DIR, "quarantine"),
+        (tg_core.ATLAS_STATE, "atlas-events"),
+    ) + tuple((r, "extra-path") for r in tg_state.config()["extra_untrusted_paths"]):
         if root.startswith(path.rstrip("/") + "/"):
             return code
     return None
@@ -154,7 +157,7 @@ def systemctl_status_tail(args):
                 lines = args[i + 1]
                 i += 1
         elif a.startswith("-") and not a.startswith("--") and "n" in a[1:]:
-            rest = a[a.index("n", 1) + 1:]
+            rest = a[a.index("n", 1) + 1 :]
             if rest:
                 lines = rest
             elif i + 1 < len(args):
@@ -167,24 +170,82 @@ def systemctl_status_tail(args):
         return True
 
 
-READERS = frozenset({
-    "cat", "head", "tail", "grep", "egrep", "fgrep", "zgrep", "zcat", "zless", "less", "more", "awk",
-    "gawk", "sed", "sort", "uniq", "cut", "tr", "wc", "jq", "diff", "strings", "od", "xxd", "hexdump",
-    "base64", "tac", "nl", "paste", "join", "comm", "column", "fold", "rev", "iconv", "file",
-    "sha256sum", "md5sum", "cp", "mv", "tee", "dd", "rsync", "scp", "install", "python3", "perl",
-    "vim", "view", "nano", "bat", "tar", "gzip", "gunzip", "xz", "unxz", "bzip2", "bunzip2"})
+READERS = frozenset(
+    {
+        "cat",
+        "head",
+        "tail",
+        "grep",
+        "egrep",
+        "fgrep",
+        "zgrep",
+        "zcat",
+        "zless",
+        "less",
+        "more",
+        "awk",
+        "gawk",
+        "sed",
+        "sort",
+        "uniq",
+        "cut",
+        "tr",
+        "wc",
+        "jq",
+        "diff",
+        "strings",
+        "od",
+        "xxd",
+        "hexdump",
+        "base64",
+        "tac",
+        "nl",
+        "paste",
+        "join",
+        "comm",
+        "column",
+        "fold",
+        "rev",
+        "iconv",
+        "file",
+        "sha256sum",
+        "md5sum",
+        "cp",
+        "mv",
+        "tee",
+        "dd",
+        "rsync",
+        "scp",
+        "install",
+        "python3",
+        "perl",
+        "vim",
+        "view",
+        "nano",
+        "bat",
+        "tar",
+        "gzip",
+        "gunzip",
+        "xz",
+        "unxz",
+        "bzip2",
+        "bunzip2",
+    }
+)
 
 
-WRAPPERS = frozenset({"sudo", "doas", "env", "nice", "nohup", "timeout", "stdbuf", "ionice",
-                      "command", "exec", "time"})
+WRAPPERS = frozenset({"sudo", "doas", "env", "nice", "nohup", "timeout", "stdbuf", "ionice", "command", "exec", "time"})
 
 
-WRAPPER_VALUE_OPTS = frozenset({"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-n", "-s",
-                                "-k", "-c"})
+WRAPPER_VALUE_OPTS = frozenset({"-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-n", "-s", "-k", "-c"})
 
 
-GLOB_ROOTS = (("/var/log", "var-log"), (tg_core.QUARANTINE_DIR, "quarantine"),
-              (tg_core.ATLAS_STATE + "/events.jsonl*", "atlas-events"), (tg_core.ATLAS_STATE + "/drift.log", "atlas-drift"))
+GLOB_ROOTS = (
+    ("/var/log", "var-log"),
+    (tg_core.QUARANTINE_DIR, "quarantine"),
+    (tg_core.ATLAS_STATE + "/events.jsonl*", "atlas-events"),
+    (tg_core.ATLAS_STATE + "/drift.log", "atlas-drift"),
+)
 
 
 WORDS_PER_SEGMENT_MAX = 64
@@ -223,6 +284,7 @@ def glob_source(pattern, cwd, prog):
     """Finding 7: a glob counts by the files Bash will open. A pattern that can reach a source root
     taints even if nothing matches now; existing matches (symlinks, artifacts) are checked too."""
     import fnmatch
+
     base = cwd if isinstance(cwd, str) and cwd.startswith("/") else "/"
     pat = os.path.normpath(os.path.join(base, os.path.expanduser(pattern)))
     parts = pat.strip("/").split("/")
@@ -231,11 +293,11 @@ def glob_source(pattern, cwd, prog):
         k = min(len(parts), len(rparts))
         if k < len(rparts) and prog in ANCESTOR_EXEMPT:
             continue
-        if all(fnmatch.fnmatchcase(rparts[i], parts[i]) or fnmatch.fnmatchcase(parts[i], rparts[i])
-               for i in range(k)):
+        if all(fnmatch.fnmatchcase(rparts[i], parts[i]) or fnmatch.fnmatchcase(parts[i], rparts[i]) for i in range(k)):
             return code
     import glob
     import itertools
+
     for m in itertools.islice(glob.iglob(pat), 200):
         for p in candidate_paths(m, cwd):
             src = path_source(p)
@@ -253,8 +315,9 @@ ARG_DATA_PROGRAMS = frozenset({"echo", "printf"})
 PIPES = frozenset({"|", "|&"})
 
 
-REDIRECT_OPS = frozenset({">", ">>", "1>", "2>", "1>>", "2>>", "&>", "&>>", ">|", "<", "0<", ">&", "1>&",
-                          "2>&", "<&", "<>", "&>"})
+REDIRECT_OPS = frozenset(
+    {">", ">>", "1>", "2>", "1>>", "2>>", "&>", "&>>", ">|", "<", "0<", ">&", "1>&", "2>&", "<&", "<>", "&>"}
+)
 
 
 def _code_runs_in(cmd):
@@ -324,8 +387,9 @@ def _seg_words(seg):
     return out
 
 
-OVERRIDE_WORDS = frozenset({"alias", "unalias", "shopt", "enable", "eval", "builtin", "exec", "hash",
-                            "command", "function", "source", "."})
+OVERRIDE_WORDS = frozenset(
+    {"alias", "unalias", "shopt", "enable", "eval", "builtin", "exec", "hash", "command", "function", "source", "."}
+)
 
 
 INTERPRETER = tg_core.Lazy(r"^(python[0-9.]*|perl|ruby|node|php|awk|gawk|sed)$")
@@ -348,8 +412,9 @@ def _redefines(toks):
 ALLOWED_PROGRAMS = frozenset({"cat", "echo", "printf", "tee", "true", ":", "git"})  # R1: the data exemption
 
 
-READ_PROGRAMS = frozenset({"cat", "grep", "head", "tail", "less", "wc", "ls", "stat", "file", "diff",
-                           "sha256sum", "git"})  # R2: commands that only read a latent script
+READ_PROGRAMS = frozenset(
+    {"cat", "grep", "head", "tail", "less", "wc", "ls", "stat", "file", "diff", "sha256sum", "git"}
+)  # R2: commands that only read a latent script
 
 
 GIT_R1 = frozenset({"add", "commit", "status", "diff", "log"})
@@ -409,7 +474,7 @@ def _seg_write_dests(seg, prog, words, pi, cwd):
             if t != "/dev/null":
                 out.append(_abs(t, cwd))
     if prog == "tee":
-        out += [_abs(a, cwd) for a in positionals(words[pi + 1:]) if a != "-"]
+        out += [_abs(a, cwd) for a in positionals(words[pi + 1 :]) if a != "-"]
     return out
 
 
@@ -438,8 +503,13 @@ def _classify(cmd, cwd, depth, latent, exempt_ok):
         toks = tg_lexer.tokenize(cmd)
     except tg_core.ParseError:
         return raw_bash_source(cmd)
-    cmd_flat = _code_runs_in(cmd) or _redefines(toks) or not _only_programs(toks, ALLOWED_PROGRAMS, GIT_R1) \
-        or _dests_blocked(toks, cwd) or not exempt_ok  # R1, R5
+    cmd_flat = (
+        _code_runs_in(cmd)
+        or _redefines(toks)
+        or not _only_programs(toks, ALLOWED_PROGRAMS, GIT_R1)
+        or _dests_blocked(toks, cwd)
+        or not exempt_ok
+    )  # R1, R5
     for seg, sep in tg_lexer.segments_with_sep(toks):
         pairs = _seg_words(seg)[:WORDS_PER_SEGMENT_MAX]
         wobjs = [w for w, _ in pairs]
@@ -447,8 +517,9 @@ def _classify(cmd, cwd, depth, latent, exempt_ok):
             continue
         words = [w.text() for w in wobjs]
         pi, prog = effective_program(words)
-        data_seg = _is_data_segment(seg, sep, prog, cmd_flat,
-                                    bool(_seg_write_dests(seg, prog, words, pi, cwd)) if pi is not None else False)
+        data_seg = _is_data_segment(
+            seg, sep, prog, cmd_flat, bool(_seg_write_dests(seg, prog, words, pi, cwd)) if pi is not None else False
+        )
         data_seg, text_only = _data_words(pairs, words, pi, prog, seg, cwd, data_seg, latent)
         if not data_seg:
             for w in wobjs:
@@ -474,8 +545,7 @@ def _data_words(pairs, words, pi, prog, seg, cwd, data_seg, latent):
         for idx, (w, kind) in enumerate(pairs):
             if idx <= (pi or 0):
                 continue
-            if w.heredoc is not None or kind == "herestring" or (
-                    prog in ARG_DATA_PROGRAMS and kind == "arg"):
+            if w.heredoc is not None or kind == "herestring" or (prog in ARG_DATA_PROGRAMS and kind == "arg"):
                 text_only.add(idx)
         texts = [pairs[i][0].heredoc if pairs[i][0].heredoc is not None else words[i] for i in text_only]
         marker = next((m for m in (raw_bash_source(t) for t in texts) if m), None)
@@ -495,13 +565,13 @@ def _program_source(words, text_only, cwd, depth, latent, exempt_ok):
         b = os.path.basename(w)
         if b in PROGRAM_SOURCES:
             return PROGRAM_SOURCES[b]
-        if b == "systemctl" and systemctl_status_tail(words[idx + 1:]):
+        if b == "systemctl" and systemctl_status_tail(words[idx + 1 :]):
             return "systemctl-status"
         if b == "gh" and len(words) > idx + 1:
-            rest = words[idx + 1:idx + 3]
+            rest = words[idx + 1 : idx + 3]
             if rest[0] == "api" or (rest[0] in ("pr", "issue") and "view" in rest):
                 return "gh"
-        if b in SHELLS and depth < 3 and "-c" in words[idx + 1:]:
+        if b in SHELLS and depth < 3 and "-c" in words[idx + 1 :]:
             k = words.index("-c", idx + 1)
             if k + 1 < len(words):
                 src = _classify(words[k + 1], cwd, depth + 1, latent, exempt_ok)
@@ -582,8 +652,12 @@ def write_targets(cmd, cwd):
     except tg_core.ParseError:
         return []
     out = []
-    cmd_flat = _code_runs_in(cmd) or _redefines(toks) or not _only_programs(toks, ALLOWED_PROGRAMS, GIT_R1) \
+    cmd_flat = (
+        _code_runs_in(cmd)
+        or _redefines(toks)
+        or not _only_programs(toks, ALLOWED_PROGRAMS, GIT_R1)
         or _dests_blocked(toks, cwd)
+    )
     for seg, sep in tg_lexer.segments_with_sep(toks):
         words, bodies, redirects = _write_segment(seg, cwd)
         out += redirects
@@ -593,7 +667,7 @@ def write_targets(cmd, cwd):
         if bodies and not _is_data_segment(seg, sep, prog, cmd_flat, bool(_seg_write_dests(seg, prog, words, pi, cwd))):
             for body in bodies:  # executed or interpreted text: its redirections write too
                 out += write_targets(body, cwd)
-        out += _program_targets(prog, words[pi + 1:], cwd)
+        out += _program_targets(prog, words[pi + 1 :], cwd)
     return [x for x in out if x != "/dev/null"]
 
 
@@ -608,8 +682,7 @@ def _write_segment(seg, cwd):
                 t = seg[i + 1][1].text()
                 if seg[i + 1][1].heredoc:
                     bodies.append(seg[i + 1][1].heredoc)
-                if (v in WRITE_REDIRECTS or (v in (">&", "&>") and not t.isdigit())) \
-                        and t != "/dev/null":
+                if (v in WRITE_REDIRECTS or (v in (">&", "&>") and not t.isdigit())) and t != "/dev/null":
                     out.append(_abs(t, cwd))
                 i += 2
                 continue
@@ -657,8 +730,13 @@ def _copy_targets(args, pos, cwd):
     else:
         return []
     dest = _abs(tdir, cwd)
-    if tdir.endswith("/") or os.path.isdir(dest) or len(srcs) > 1 or "-t" in args \
-            or any(a.startswith("--target-directory") for a in args):
+    if (
+        tdir.endswith("/")
+        or os.path.isdir(dest)
+        or len(srcs) > 1
+        or "-t" in args
+        or any(a.startswith("--target-directory") for a in args)
+    ):
         out += [os.path.join(dest, os.path.basename(x.rstrip("/"))) for x in srcs]
     else:
         out.append(dest)
@@ -680,20 +758,61 @@ def tool_source(tool, ti, cwd, latent=None):
         cmd = ti.get("command")
         if isinstance(cmd, str):
             if tool == "Monitor" and cmd.strip() in tg_state.monitor_commands():
-                return None  # the Atlas sensor prints fixed identifiers for every sensor outside bus.TRUSTED_TEXT_SENSORS
+                return (
+                    None  # the Atlas sensor prints fixed identifiers for every sensor outside bus.TRUSTED_TEXT_SENSORS
+                )
             return bash_source(cmd, cwd, latent=latent)  # a monitored command's events reach the model
     return None
 
 
-SIMPLE_READERS = frozenset({
-    "cat", "head", "tail", "grep", "egrep", "wc", "ls", "stat", "uptime", "df", "du", "free", "ps",
-    "id", "whoami", "uname", "jq", "cut", "tr", "diff", "sha256sum", "last",
-})
+SIMPLE_READERS = frozenset(
+    {
+        "cat",
+        "head",
+        "tail",
+        "grep",
+        "egrep",
+        "wc",
+        "ls",
+        "stat",
+        "uptime",
+        "df",
+        "du",
+        "free",
+        "ps",
+        "id",
+        "whoami",
+        "uname",
+        "jq",
+        "cut",
+        "tr",
+        "diff",
+        "sha256sum",
+        "last",
+    }
+)
 
 
-CHECKED = frozenset({"sort", "uniq", "awk", "sed", "date", "file", "hostname", "ss",
-                     "systemctl", "journalctl", "dpkg", "apt", "crontab",
-                     "ssh-keygen", "docker", "getent"})
+CHECKED = frozenset(
+    {
+        "sort",
+        "uniq",
+        "awk",
+        "sed",
+        "date",
+        "file",
+        "hostname",
+        "ss",
+        "systemctl",
+        "journalctl",
+        "dpkg",
+        "apt",
+        "crontab",
+        "ssh-keygen",
+        "docker",
+        "getent",
+    }
+)
 
 
 PROGRAM_NAME = tg_core.Lazy(r"^[a-z][a-z0-9-]*$")
@@ -707,8 +826,7 @@ MAX_COMMAND = 8000
 
 def short_cluster(arg, letters):
     """True if arg is a short-option cluster (-abc) containing any of `letters`."""
-    return (arg.startswith("-") and not arg.startswith("--") and len(arg) > 1
-            and any(ch in arg[1:] for ch in letters))
+    return arg.startswith("-") and not arg.startswith("--") and len(arg) > 1 and any(ch in arg[1:] for ch in letters)
 
 
 def positionals(args):
@@ -782,8 +900,19 @@ SED_SCRIPT = tg_core.Lazy(r"\s*" + SED_ONE + r"(?:\s*;\s*" + SED_ONE + r")*\s*(?
 SED_SCRIPT_MAX = 1000
 
 
-SED_LONG = frozenset({"--quiet", "--silent", "--regexp-extended", "--separate", "--unbuffered",
-                      "--null-data", "--posix", "--debug", "--sandbox"})
+SED_LONG = frozenset(
+    {
+        "--quiet",
+        "--silent",
+        "--regexp-extended",
+        "--separate",
+        "--unbuffered",
+        "--null-data",
+        "--posix",
+        "--debug",
+        "--sandbox",
+    }
+)
 
 
 def check_sed(args):
@@ -838,8 +967,7 @@ def check_ss(args):
     return not any(long_opt(a, ("kill", "diag")) or short_cluster(a, "KD") for a in args)
 
 
-SYSTEMCTL_VERBS = frozenset({"status", "is-active", "is-enabled", "is-failed", "list-timers",
-                             "list-units", "show"})
+SYSTEMCTL_VERBS = frozenset({"status", "is-active", "is-enabled", "is-failed", "list-timers", "list-units", "show"})
 
 
 def check_systemctl(args):
@@ -849,18 +977,42 @@ def check_systemctl(args):
     return not any(long_opt(a, ("host", "machine")) or short_cluster(a, "HM") for a in args)
 
 
-JOURNALCTL_VALUE_SHORT = {"-u": None, "-t": None, "-S": None, "-U": None, "-p": None, "-g": None,
-                          "-o": "output"}
+JOURNALCTL_VALUE_SHORT = {"-u": None, "-t": None, "-S": None, "-U": None, "-p": None, "-g": None, "-o": "output"}
 
 
-JOURNALCTL_VALUE_LONG = {"--unit": None, "--identifier": None, "--since": None, "--until": None,
-                         "--priority": None, "--grep": None, "--output-fields": None,
-                         "--output": "output"}
+JOURNALCTL_VALUE_LONG = {
+    "--unit": None,
+    "--identifier": None,
+    "--since": None,
+    "--until": None,
+    "--priority": None,
+    "--grep": None,
+    "--output-fields": None,
+    "--output": "output",
+}
 
 
-JOURNALCTL_FLAGS = frozenset({"--no-pager", "-k", "--dmesg", "-r", "--reverse", "-b", "--boot",
-                              "-n", "--lines", "-q", "--quiet", "-x", "--catalog", "--utc",
-                              "--no-hostname", "-a", "--all"})
+JOURNALCTL_FLAGS = frozenset(
+    {
+        "--no-pager",
+        "-k",
+        "--dmesg",
+        "-r",
+        "--reverse",
+        "-b",
+        "--boot",
+        "-n",
+        "--lines",
+        "-q",
+        "--quiet",
+        "-x",
+        "--catalog",
+        "--utc",
+        "--no-hostname",
+        "-a",
+        "--all",
+    }
+)
 
 
 JOURNALCTL_OUTPUTS = frozenset({"short-iso", "cat", "json", "short", "short-precise"})
@@ -920,8 +1072,23 @@ def check_getent(args):
     return bool(pos) and pos[0] in GETENT_LOCAL and all(not a.startswith("-") for a in args)
 
 
-DPKG_READ = frozenset({"-l", "--list", "-s", "--status", "-L", "--listfiles", "-S", "--search",
-                       "-V", "--verify", "-p", "--print-avail", "--get-selections"})
+DPKG_READ = frozenset(
+    {
+        "-l",
+        "--list",
+        "-s",
+        "--status",
+        "-L",
+        "--listfiles",
+        "-S",
+        "--search",
+        "-V",
+        "--verify",
+        "-p",
+        "--print-avail",
+        "--get-selections",
+    }
+)
 
 
 def check_dpkg(args):
@@ -929,8 +1096,7 @@ def check_dpkg(args):
     return bool(opts) and all(a in DPKG_READ for a in opts)
 
 
-APT_LIST_OPTS = frozenset({"--installed", "--upgradable", "--manual-installed", "-a",
-                           "--all-versions", "-q", "-qq"})
+APT_LIST_OPTS = frozenset({"--installed", "--upgradable", "--manual-installed", "-a", "--all-versions", "-q", "-qq"})
 
 
 def check_apt(args):
@@ -974,11 +1140,22 @@ def check_docker(args):
 
 
 CHECKERS = {
-    "sort": check_sort, "uniq": check_uniq, "awk": check_awk, "sed": check_sed,
-    "date": check_date, "file": check_file, "hostname": check_hostname, "ss": check_ss,
-    "systemctl": check_systemctl, "journalctl": check_journalctl,
-    "dpkg": check_dpkg, "apt": check_apt, "crontab": check_crontab,
-    "ssh-keygen": check_ssh_keygen, "docker": check_docker, "getent": check_getent,
+    "sort": check_sort,
+    "uniq": check_uniq,
+    "awk": check_awk,
+    "sed": check_sed,
+    "date": check_date,
+    "file": check_file,
+    "hostname": check_hostname,
+    "ss": check_ss,
+    "systemctl": check_systemctl,
+    "journalctl": check_journalctl,
+    "dpkg": check_dpkg,
+    "apt": check_apt,
+    "crontab": check_crontab,
+    "ssh-keygen": check_ssh_keygen,
+    "docker": check_docker,
+    "getent": check_getent,
 }
 
 
@@ -1044,8 +1221,11 @@ def bash_allowed(cmd):
     except tg_core.ParseError:
         return False
     for kind, v in toks:
-        if kind == "op" and v not in tg_lexer.SEPARATORS and v not in (
-                ">", "1>", "2>", "&>", ">&", "1>&", "2>&", "<", "0<"):
+        if (
+            kind == "op"
+            and v not in tg_lexer.SEPARATORS
+            and v not in (">", "1>", "2>", "&>", ">&", "1>&", "2>&", "<", "0<")
+        ):
             return False
     return all(segment_allowed(seg) for seg in tg_lexer.segments(toks))
 
@@ -1061,4 +1241,3 @@ def tainted_allows(tool, ti):
     if tool == "Bash":
         return bash_allowed(ti.get("command"))
     return False
-

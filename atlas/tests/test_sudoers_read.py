@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """/etc/sudoers is read through sudo; a failing sudo is a measurement error, never a value."""
+
 import importlib.util
 import unittest
 from pathlib import Path

@@ -3,6 +3,7 @@
 No contract is hardcoded. The shipped examples (examples/jobs.d/) are exercised through the runner,
 including the hourly "one line per run" contract (fresh/stale log, last line, last success, skips).
 Everything runs on temp dirs; no real log is read."""
+
 import os
 import shutil
 import subprocess
@@ -45,7 +46,7 @@ class TestRunner(RunnerCase):
     def test_runner_holds_no_contract(self):
         text = JOBS.read_text()
         code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
-        self.assertNotRegex(code, r'(?m)^\s*check(_last_line|_last_match)? "')   # only helper definitions
+        self.assertNotRegex(code, r'(?m)^\s*check(_last_line|_last_match)? "')  # only helper definitions
 
     def test_contracts_run_in_sorted_order(self):
         self.contract("20-b.sh", 'problem "second"\n')
@@ -62,8 +63,11 @@ class TestRunner(RunnerCase):
         old.write_text("backup: OK\n")
         t = time.time() - 30 * 3600
         os.utime(old, (t, t))
-        self.contract("10-x.sh", 'check "missing" "%s" 26 "OK"\ncheck "old" "%s" 26 "OK"\ncheck "fresh" "%s" 26 "backup: OK"\n'
-                      % (self.state / "nope.log", old, fresh))
+        self.contract(
+            "10-x.sh",
+            'check "missing" "%s" 26 "OK"\ncheck "old" "%s" 26 "OK"\ncheck "fresh" "%s" 26 "backup: OK"\n'
+            % (self.state / "nope.log", old, fresh),
+        )
         r = self.run_jobs()
         self.assertEqual(r.returncode, 1)
         self.assertIn("missing: log file missing", r.stdout)
@@ -72,7 +76,7 @@ class TestRunner(RunnerCase):
         fresh.write_text("backup: OK\n")
         old.unlink()
         self.contract("10-x.sh", 'check "fresh" "%s" 26 "backup: OK"\n' % fresh)
-        self.assertEqual(self.run_jobs().returncode, 0)   # reverse control
+        self.assertEqual(self.run_jobs().returncode, 0)  # reverse control
 
     def test_polish_catalog(self):
         self.contract("10-x.sh", 'check "nocny" "%s" 26 "OK"\n' % (self.state / "nope.log"))
@@ -84,10 +88,10 @@ class TestRunner(RunnerCase):
         self.contract("10-x.sh", 'check "nocny" "%s" 26 "OK"\n' % (self.state / "nope.log"))
         (self.state / "sentinel.env").write_text("# comment\nSENTINEL_LANG=pl\n")
         self.assertIn("brak pliku logu", self.run_jobs().stdout)
-        self.assertIn("log file missing", self.run_jobs(SENTINEL_LANG="en").stdout)   # the environment wins
+        self.assertIn("log file missing", self.run_jobs(SENTINEL_LANG="en").stdout)  # the environment wins
 
     def test_syntax_error_is_unknown_not_clean(self):
-        self.contract("10-broken.sh", 'if then fi (\n')
+        self.contract("10-broken.sh", "if then fi (\n")
         self.contract("20-ok.sh", 'problem "still evaluated"\n')
         r = self.run_jobs()
         self.assertEqual(r.returncode, 2)
@@ -112,7 +116,7 @@ class TestRunner(RunnerCase):
         self.assertIn("job b", r.stdout)
         other = self.state / "other-pauses"
         other.mkdir()
-        self.assertIn("job a", self.run_jobs(JOBS_PAUSE_DIR=other).stdout)   # override wins
+        self.assertIn("job a", self.run_jobs(JOBS_PAUSE_DIR=other).stdout)  # override wins
 
 
 class TestNightlyExample(RunnerCase):
@@ -179,8 +183,10 @@ class TestHourlyExample(RunnerCase):
         self.assertEqual(self.problems(), [])
 
     def test_old_ok_with_fresh_skips_fires(self):
-        self.log.write_text(f"{self.ts(240)} OK up to date\n{self.ts(120)} SKIPPED busy\n"
-                            f"{self.ts(60)} SKIPPED busy\n{self.ts(0)} SKIPPED busy\n")
+        self.log.write_text(
+            f"{self.ts(240)} OK up to date\n{self.ts(120)} SKIPPED busy\n"
+            f"{self.ts(60)} SKIPPED busy\n{self.ts(0)} SKIPPED busy\n"
+        )
         self.assertTrue(self.problems())
 
     def test_recent_ok_with_skips_quiet(self):

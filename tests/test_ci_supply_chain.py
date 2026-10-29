@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """CI supply chain (audit 14) and the commit convention guard (audit 23)."""
+
 import os
 import re
 import shutil
@@ -41,8 +42,13 @@ class CommitCheck(unittest.TestCase):
     def repo(self, subjects):
         d = Path(tempfile.mkdtemp(prefix="cc-"))
         self.addCleanup(shutil.rmtree, d, True)
-        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com", GIT_COMMITTER_NAME="t",
-                   GIT_COMMITTER_EMAIL="t@example.com")
+        env = dict(
+            os.environ,
+            GIT_AUTHOR_NAME="t",
+            GIT_AUTHOR_EMAIL="t@example.com",
+            GIT_COMMITTER_NAME="t",
+            GIT_COMMITTER_EMAIL="t@example.com",
+        )
         subprocess.run(["git", "init", "-q", str(d)], check=True)
         subprocess.run(["git", "-C", str(d), "commit", "-q", "--allow-empty", "-m", "base"], check=True, env=env)
         base = subprocess.run(["git", "-C", str(d), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -67,6 +73,7 @@ class CommitCheck(unittest.TestCase):
 class CommitCheckEdges(unittest.TestCase):
     repo = CommitCheck.repo
     check = CommitCheck.check
+
     def test_empty_and_zero_base_check_head_only(self):
         d, _ = self.repo(["old subject", "fix: current"])
         for base in ("", "0" * 40):
@@ -99,12 +106,17 @@ class CommitCheckEdges(unittest.TestCase):
     def test_merge_subject_is_excluded(self):
         d, base = self.repo(["fix: parent"])
         parent = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=d, text=True).strip()
-        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
-                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+        env = dict(
+            os.environ,
+            GIT_AUTHOR_NAME="t",
+            GIT_AUTHOR_EMAIL="t@example.com",
+            GIT_COMMITTER_NAME="t",
+            GIT_COMMITTER_EMAIL="t@example.com",
+        )
         tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=d, text=True).strip()
         merge = subprocess.check_output(
-            ["git", "commit-tree", tree, "-p", parent, "-p", base, "-m", "Merge branch"],
-            cwd=d, env=env, text=True).strip()
+            ["git", "commit-tree", tree, "-p", parent, "-p", base, "-m", "Merge branch"], cwd=d, env=env, text=True
+        ).strip()
         subprocess.run(["git", "update-ref", "HEAD", merge], cwd=d, check=True)
         self.assertEqual(self.check(d, base).returncode, 0)
 
@@ -112,10 +124,15 @@ class CommitCheckEdges(unittest.TestCase):
         d, base = self.repo(["invalid parent"])
         parent = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=d, text=True).strip()
         tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=d, text=True).strip()
-        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
-                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+        env = dict(
+            os.environ,
+            GIT_AUTHOR_NAME="t",
+            GIT_AUTHOR_EMAIL="t@example.com",
+            GIT_COMMITTER_NAME="t",
+            GIT_COMMITTER_EMAIL="t@example.com",
+        )
         merge = subprocess.check_output(
-            ["git", "commit-tree", tree, "-p", parent, "-p", base, "-m", "Merge branch"],
-            cwd=d, env=env, text=True).strip()
+            ["git", "commit-tree", tree, "-p", parent, "-p", base, "-m", "Merge branch"], cwd=d, env=env, text=True
+        ).strip()
         subprocess.run(["git", "update-ref", "HEAD", merge], cwd=d, check=True)
         self.assertEqual(self.check(d, "0" * 40).returncode, 0)

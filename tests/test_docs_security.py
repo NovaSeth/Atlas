@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Security and architecture docs carry the threat model (audit 13), C4 diagrams with trust boundaries (audit 24)
 and the compatibility matrix (audit 22)."""
+
 import re
 import unittest
 from pathlib import Path
@@ -15,8 +16,17 @@ class Docs(unittest.TestCase):
     def test_threat_model(self):
         self.assertIn("## Threat model", SEC)
         tm = SEC.split("## Threat model", 1)[1]
-        for word in ("root", "notification channel", "host failure", "Atlas account", "model provider",
-                     "IP addresses", "user names", "GDPR", "pseudonymisation"):
+        for word in (
+            "root",
+            "notification channel",
+            "host failure",
+            "Atlas account",
+            "model provider",
+            "IP addresses",
+            "user names",
+            "GDPR",
+            "pseudonymisation",
+        ):
             self.assertIn(word, tm, word)
 
     def test_c4_diagrams_with_boundaries(self):

@@ -3,6 +3,7 @@
 the catalogs agree on keys and placeholders, bash and Python fill templates the same way, the env
 file never executes code and the environment always wins, and a patrol run speaks the configured
 language. Temp dirs only."""
+
 import importlib.util
 import json
 import os
@@ -27,15 +28,17 @@ PH = re.compile(r"\{([a-z_]+)\}")
 
 
 def catalog(lang):
-    return {k: v for k, v in json.loads((ROOT / "i18n" / ("%s.json" % lang)).read_text()).items()
-            if not k.startswith("_")}
+    return {
+        k: v for k, v in json.loads((ROOT / "i18n" / ("%s.json" % lang)).read_text()).items() if not k.startswith("_")
+    }
 
 
 def bash(script, env=None):
     e = dict(os.environ)
     e.update(env or {})
-    return subprocess.run(["bash", "-c", '. "%s/lib.sh"; %s' % (ATLAS, script)], env=e,
-                          capture_output=True, text=True, timeout=30)
+    return subprocess.run(
+        ["bash", "-c", '. "%s/lib.sh"; %s' % (ATLAS, script)], env=e, capture_output=True, text=True, timeout=30
+    )
 
 
 class Catalogs(unittest.TestCase):
@@ -50,26 +53,33 @@ class Catalogs(unittest.TestCase):
             self.assertEqual(i18n.t("jobs.no_log", name="a", file="b"), "a: log file missing (b)")
         with mock.patch.dict(os.environ, {"SENTINEL_LANG": "pl"}):
             self.assertEqual(i18n.t("jobs.no_log", name="a", file="b"), "a: brak pliku logu (b)")
-            self.assertEqual(i18n.t("no.such.key"), "no.such.key")   # a gap is visible, never silent
+            self.assertEqual(i18n.t("no.such.key"), "no.such.key")  # a gap is visible, never silent
 
     def test_bash_and_python_fill_the_same_way(self):
         value = "a&b \\ /x/ {other}"
         for lang in ("en", "pl"):
-            r = bash('t esc.revive unit="$V"; echo; t jobs.no_log name=n file="$V"',
-                     {"SENTINEL_LANG": lang, "V": value})
+            r = bash(
+                't esc.revive unit="$V"; echo; t jobs.no_log name=n file="$V"', {"SENTINEL_LANG": lang, "V": value}
+            )
             with mock.patch.dict(os.environ, {"SENTINEL_LANG": lang}):
                 want = i18n.t("esc.revive", unit=value) + "\n" + i18n.t("jobs.no_log", name="n", file=value)
             self.assertEqual(r.stdout, want, (lang, r.stderr))
 
     def test_cli(self):
-        r = subprocess.run([sys.executable, str(ATLAS / "i18n.py"), "atlas.disk_alarm", "pct=95", "limit=90"],
-                           env=dict(os.environ, SENTINEL_LANG="pl"), capture_output=True, text=True)
+        r = subprocess.run(
+            [sys.executable, str(ATLAS / "i18n.py"), "atlas.disk_alarm", "pct=95", "limit=90"],
+            env=dict(os.environ, SENTINEL_LANG="pl"),
+            capture_output=True,
+            text=True,
+        )
         self.assertEqual(r.stdout, "dysk /: 95% zajete (prog 90%)")
 
 
 class EnvFile(unittest.TestCase):
-    TEXT = ('# comment\n\nSENTINEL_EMAIL=ops@example.com\nexport SENTINEL_LANG="pl"\n'
-            "QUOTED='a b'\nEVIL=$(touch {canary})\nnot a line\nATLAS_DISK_PCT=50\n")
+    TEXT = (
+        '# comment\n\nSENTINEL_EMAIL=ops@example.com\nexport SENTINEL_LANG="pl"\n'
+        "QUOTED='a b'\nEVIL=$(touch {canary})\nnot a line\nATLAS_DISK_PCT=50\n"
+    )
 
     def setUp(self):
         self.d = Path(tempfile.mkdtemp(prefix="envfile-"))
@@ -81,15 +91,18 @@ class EnvFile(unittest.TestCase):
         env = {"SENTINEL_LANG": "en"}
         applied = envfile.load(self.d, env)
         self.assertEqual(env["SENTINEL_EMAIL"], "ops@example.com")
-        self.assertEqual(env["SENTINEL_LANG"], "en")           # the environment wins
+        self.assertEqual(env["SENTINEL_LANG"], "en")  # the environment wins
         self.assertNotIn("SENTINEL_LANG", applied)
         self.assertEqual(env["QUOTED"], "a b")
-        self.assertEqual(env["EVIL"], "$(touch %s)" % self.canary)   # literal text, never run
+        self.assertEqual(env["EVIL"], "$(touch %s)" % self.canary)  # literal text, never run
         self.assertFalse(self.canary.exists())
 
     def test_bash_parse_and_precedence(self):
-        r = bash('atlas_load_env "%s"; printf "%%s|%%s|%%s|%%s" "$SENTINEL_EMAIL" "$SENTINEL_LANG" "$QUOTED" "$EVIL"' % self.d,
-                 {"SENTINEL_LANG": "en"})
+        r = bash(
+            'atlas_load_env "%s"; printf "%%s|%%s|%%s|%%s" "$SENTINEL_EMAIL" "$SENTINEL_LANG" "$QUOTED" "$EVIL"'
+            % self.d,
+            {"SENTINEL_LANG": "en"},
+        )
         self.assertEqual(r.stdout, "ops@example.com|en|a b|$(touch %s)" % self.canary, r.stderr)
         self.assertFalse(self.canary.exists())
 
@@ -107,6 +120,7 @@ class EnvFile(unittest.TestCase):
                 m = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(m)
                 return m.THRESHOLD_DISK_PCT, m.THRESHOLD_RAM_MB
+
         self.assertEqual(load({"SENTINEL_ATLAS": str(self.d)}), (50, 250))
         self.assertEqual(load({"SENTINEL_ATLAS": str(self.d), "ATLAS_DISK_PCT": "70"}), (70, 250))
 
@@ -119,8 +133,15 @@ class PatrolLanguage(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.d, True)
 
     def alert(self, **env):
-        patrol(self.d, STUB_THRESHOLDS_RC=3, STUB_THRESHOLDS_ERR="boom", STUB_SILENT_SLEEP=5,
-               PATROL_T_SILENT=1, PATROL_NICE=1, **env)
+        patrol(
+            self.d,
+            STUB_THRESHOLDS_RC=3,
+            STUB_THRESHOLDS_ERR="boom",
+            STUB_SILENT_SLEEP=5,
+            PATROL_T_SILENT=1,
+            PATROL_NICE=1,
+            **env,
+        )
         return (self.d / "ALERT").read_text()
 
     def test_polish(self):
@@ -134,7 +155,7 @@ class PatrolLanguage(unittest.TestCase):
         self.assertIn("UNKNOWN: silent-failures — time limit of 1 s exceeded", txt)
 
     def test_language_from_the_state_dirs_env_file(self):
-        (self.d / "sentinel.env").write_text("SENTINEL_LANG=pl\n")   # state = code dir when unset
+        (self.d / "sentinel.env").write_text("SENTINEL_LANG=pl\n")  # state = code dir when unset
         env = dict(os.environ)
         env.pop("SENTINEL_LANG", None)
         with mock.patch.dict(os.environ, env, clear=True):

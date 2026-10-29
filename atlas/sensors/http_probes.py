@@ -20,6 +20,7 @@ Read-only, no LLM. Overridable: HTTP_SITES_DIR, HTTP_EXPECTED, HTTP_FETCH_CMD (t
 takes a URL and prints the status code), HTTP_EXTRA_URLS_CMD (replaces `_extra_urls_cmd`; the older
 name HTTP_ARTICLE_CMD is still accepted).
 """
+
 import glob
 import json
 import os
@@ -40,7 +41,9 @@ from untrusted import clean  # noqa: E402
 
 envfile.load(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE))
 SITES = os.environ.get("HTTP_SITES_DIR") or "/etc/apache2/sites-enabled"
-EXPECTED = os.environ.get("HTTP_EXPECTED", os.path.join(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE), "http-expected.json"))
+EXPECTED = os.environ.get(
+    "HTTP_EXPECTED", os.path.join(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE), "http-expected.json")
+)
 FETCH_CMD = os.environ.get("HTTP_FETCH_CMD", "")
 EXTRA_CMD_ENV = os.environ.get("HTTP_EXTRA_URLS_CMD", os.environ.get("HTTP_ARTICLE_CMD"))
 # 10 s: a healthy vhost answers in well under a second; 10 s separates "slow" from "down"
@@ -68,8 +71,7 @@ def fetch(url):
     """Return the first HTTP status code for url, or raise FetchError."""
     if FETCH_CMD:
         try:
-            r = subprocess.run(shlex.split(FETCH_CMD) + [url], capture_output=True, text=True,
-                               timeout=TIMEOUT + 5)
+            r = subprocess.run(shlex.split(FETCH_CMD) + [url], capture_output=True, text=True, timeout=TIMEOUT + 5)
         except subprocess.TimeoutExpired:
             raise FetchError("timeout")
         if r.returncode != 0:
@@ -80,8 +82,9 @@ def fetch(url):
             raise FetchError("bad fetcher output %r" % r.stdout[:40])
     opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with opener.open(urllib.request.Request(url, headers={"User-Agent": "sentinel-http-probe"}),
-                         timeout=TIMEOUT) as resp:
+        with opener.open(
+            urllib.request.Request(url, headers={"User-Agent": "sentinel-http-probe"}), timeout=TIMEOUT
+        ) as resp:
             return resp.status
     except urllib.error.HTTPError as e:
         return e.code  # 3xx (not followed), 4xx, 5xx are answers, not errors
@@ -115,7 +118,7 @@ def extra_urls(cmd):
 def main():
     events, unknown = [], []
     if not os.path.isdir(SITES):
-        return 0   # no Apache sites directory: nothing to probe (an existing but empty one is UNKNOWN)
+        return 0  # no Apache sites directory: nothing to probe (an existing but empty one is UNKNOWN)
     try:
         with open(EXPECTED) as f:
             expected = json.load(f)

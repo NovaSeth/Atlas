@@ -1,5 +1,6 @@
 """Subagents cannot act on untrusted data they read (audit 4, RF3); a read-hook crash leaves a taint flag (audit 15);
 an unknown transcript format is named, not silent (audit 22)."""
+
 import json
 
 import pytest
@@ -8,17 +9,26 @@ from test_taint_gate import AID, SID, completion, gate, launch_agent, tainted, w
 
 SUB = {"agent_id": "sub0000000000001", "agent_type": "general-purpose"}
 PRIVILEGED = [
-    ("Bash", {"command": "sudo id"}), ("Bash", {"command": "rm -rf /tmp/x"}),
-    ("Bash", {"command": "curl -X POST https://example.com/x"}), ("Bash", {"command": "systemctl restart apache2"}),
-    ("Bash", {"command": "python3 -c 'import os'"}), ("Bash", {"command": "echo x > /etc/y"}),
-    ("Write", {"file_path": "/tmp/x", "content": "x"}), ("Edit", {"file_path": "/tmp/x", "old_string": "a", "new_string": "b"}),
+    ("Bash", {"command": "sudo id"}),
+    ("Bash", {"command": "rm -rf /tmp/x"}),
+    ("Bash", {"command": "curl -X POST https://example.com/x"}),
+    ("Bash", {"command": "systemctl restart apache2"}),
+    ("Bash", {"command": "python3 -c 'import os'"}),
+    ("Bash", {"command": "echo x > /etc/y"}),
+    ("Write", {"file_path": "/tmp/x", "content": "x"}),
+    ("Edit", {"file_path": "/tmp/x", "old_string": "a", "new_string": "b"}),
     ("NotebookEdit", {"notebook_path": "/tmp/x.ipynb", "new_source": "x"}),
     ("Agent", {"subagent_type": "general-purpose", "prompt": "x"}),
-    ("Monitor", {"command": "tail -f /tmp/ci.log"}), ("mcp__chat__send_message", {"text": "x"}),
+    ("Monitor", {"command": "tail -f /tmp/ci.log"}),
+    ("mcp__chat__send_message", {"text": "x"}),
 ]
-READ_ONLY = [("Read", {"file_path": "/home/tester/project/README.md"}), ("Grep", {"pattern": "x", "path": "/tmp"}),
-             ("Bash", {"command": "ls /"}), ("Bash", {"command": "uptime"}),
-             ("Agent", {"subagent_type": "log-reader", "prompt": "x"})]
+READ_ONLY = [
+    ("Read", {"file_path": "/home/tester/project/README.md"}),
+    ("Grep", {"pattern": "x", "path": "/tmp"}),
+    ("Bash", {"command": "ls /"}),
+    ("Bash", {"command": "uptime"}),
+    ("Agent", {"subagent_type": "log-reader", "prompt": "x"}),
+]
 
 
 def taint_sub(g, sub=SUB):
@@ -31,7 +41,7 @@ def test_subagent_that_read_a_log_cannot_act(gate, name, ti):
     d, reason = gate.tool(name, ti, reason=True, **SUB)
     assert d == "deny"
     assert reason.startswith("TAINT GATE: this subagent read untrusted data")
-    assert not gate.tainted()                      # the parent is untouched until the result returns
+    assert not gate.tainted()  # the parent is untouched until the result returns
     assert gate.bash("sudo id") == "allow"
 
 
@@ -43,7 +53,7 @@ def test_tainted_subagent_keeps_read_only_tools(gate, name, ti):
 
 @pytest.mark.parametrize("name,ti", PRIVILEGED[:5], ids=[n + "-%d" % i for i, (n, _) in enumerate(PRIVILEGED[:5])])
 def test_clean_subagent_is_not_gated(gate, name, ti):
-    taint_sub(gate)                                # another subagent is tainted ...
+    taint_sub(gate)  # another subagent is tainted ...
     other = {"agent_id": "sub0000000000002", "agent_type": "general-purpose"}
     assert gate.tool(name, ti, **other) == "allow"  # ... this one never read untrusted data
 
@@ -91,7 +101,7 @@ def test_broken_config_with_an_allowlist_fails_closed(gate):
 
 def test_read_hook_crash_leaves_a_taint_flag(gate):
     p = gate.run_raw(('{"hook_event_name": "PreToolUse", "tool_name": "Read", "session_id": "%s", ' % SID).encode())
-    assert p.returncode == 0 and p.stdout == b""   # the read itself goes on (onFailure continue)
+    assert p.returncode == 0 and p.stdout == b""  # the read itself goes on (onFailure continue)
     assert (gate.state_dir / (SID + ".tainted")).exists()
     assert gate.bash("sudo id") == "deny"
 
@@ -118,6 +128,7 @@ def test_known_format_without_evidence_is_not_called_unknown(tainted):
 def _load_hook():
     import importlib.util
     from test_taint_gate import HOOK
+
     spec = importlib.util.spec_from_file_location("taint_gate_inproc", HOOK)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

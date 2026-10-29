@@ -1,4 +1,5 @@
 """Locked session state, persistent registries, optional configuration, logging and the switch."""
+
 import hashlib
 import json
 import os
@@ -247,6 +248,7 @@ class State:
         if self.path is None or self.unknown == "state-dir":
             return self
         import fcntl
+
         fd = os.open(os.path.join(self.dir, ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX)  # bounded by the internal deadline
         self._lock_fd = fd
@@ -430,13 +432,19 @@ class State:
         The evidence record that proved the human origin is consumed (it cannot clear a later taint)."""
         if self.path is None or self.unknown == "state-dir":
             return False
-        d = {k: v for k, v in self.data.items()
-             if k not in ("source", "since", "count", "marked_at", "pending_human", "format_unknown_at")} \
-            if self.unknown is None else {}
+        d = (
+            {
+                k: v
+                for k, v in self.data.items()
+                if k not in ("source", "since", "count", "marked_at", "pending_human", "format_unknown_at")
+            }
+            if self.unknown is None
+            else {}
+        )
         if evidence_id:
             used = [e for e in (d.get("used_evidence") or []) if isinstance(e, str)]
             used.append(evidence_id)
-            d["used_evidence"] = used[-tg_core.EVIDENCE_MAX:]
+            d["used_evidence"] = used[-tg_core.EVIDENCE_MAX :]
         d["tainted"] = False
         if not self._write(d):
             return False
@@ -453,8 +461,14 @@ class State:
 
 def log(session_id, event, tool, decision, reason):
     path = os.environ.get("TAINT_LOG") or tg_core.LOG_PATH
-    line = "%s %s %s %s %s %s\n" % (tg_core.now_iso(), safe_token(session_id, 8), safe_token(event, 20),
-                                    safe_token(tool, 80), decision, reason)
+    line = "%s %s %s %s %s %s\n" % (
+        tg_core.now_iso(),
+        safe_token(session_id, 8),
+        safe_token(event, 20),
+        safe_token(tool, 80),
+        decision,
+        reason,
+    )
     try:
         d = os.path.dirname(path)
         if d and not os.path.isdir(d):
@@ -476,5 +490,5 @@ def switch_on():
     except OSError:
         return False
     import stat as stat_mod
-    return stat_mod.S_ISREG(st.st_mode) and st.st_uid == 0
 
+    return stat_mod.S_ISREG(st.st_mode) and st.st_uid == 0

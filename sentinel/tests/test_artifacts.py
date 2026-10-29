@@ -1,4 +1,5 @@
 """Static checks of the deploy artifacts (unit template and Apache fragment)."""
+
 import re
 import unittest
 
@@ -13,18 +14,28 @@ class UnitTests(unittest.TestCase):
         self.text = UNIT.read_text()
 
     def test_required_directives(self):
-        for line in ("User=@ATLAS_USER@", "Restart=always", "WatchdogSec=120", "MemoryMax=80M",
-                     "CPUQuota=10%", "Nice=10", "Type=notify", "NotifyAccess=main"):
+        for line in (
+            "User=@ATLAS_USER@",
+            "Restart=always",
+            "WatchdogSec=120",
+            "MemoryMax=80M",
+            "CPUQuota=10%",
+            "Nice=10",
+            "Type=notify",
+            "NotifyAccess=main",
+        ):
             self.assertRegex(self.text, r"(?m)^%s\s*$" % re.escape(line))
         self.assertRegex(self.text, r"(?m)^ExecStart=\S*python3 \S*sentinel/stream\.py\s*$")
-
 
     def test_every_unit_uses_only_known_placeholders(self):
         for unit in sorted((SENTINEL / "units").iterdir()):
             text = unit.read_text()
             self.assertNotIn("/home/", text, unit.name)
-            self.assertEqual(set(re.findall(r"@[A-Z_]+@", text)) - {"@ATLAS_CODE@", "@ATLAS_STATE@", "@ATLAS_USER@"},
-                             set(), unit.name)
+            self.assertEqual(
+                set(re.findall(r"@[A-Z_]+@", text)) - {"@ATLAS_CODE@", "@ATLAS_STATE@", "@ATLAS_USER@"},
+                set(),
+                unit.name,
+            )
 
 
 class TimerTests(unittest.TestCase):
@@ -43,8 +54,11 @@ class ApacheTests(unittest.TestCase):
         self.text = CONF.read_text()
 
     def test_customlog_format_and_condition(self):
-        self.assertIn('GlobalLog ${APACHE_LOG_DIR}/sentinel-sensitive.log '
-                      '"%{%Y-%m-%dT%H:%M:%S}t %v %a %>s %B \\"%r\\"" env=sentinel_sensitive', self.text)
+        self.assertIn(
+            "GlobalLog ${APACHE_LOG_DIR}/sentinel-sensitive.log "
+            '"%{%Y-%m-%dT%H:%M:%S}t %v %a %>s %B \\"%r\\"" env=sentinel_sensitive',
+            self.text,
+        )
 
     def test_uses_globallog_not_customlog(self):
         # server-level CustomLog is not inherited by vhosts that define their own CustomLog
@@ -54,7 +68,9 @@ class ApacheTests(unittest.TestCase):
 
     def test_paths_covered(self):
         for frag in ("wp-config", "/\\.env", "/\\.git/", "dump", "\\.sql\\.gz", "phpinfo", "server-status"):
-            self.assertRegex(self.text, r"(?im)^SetEnvIfNoCase Request_URI .*" + re.escape(frag) + r".* sentinel_sensitive=1")
+            self.assertRegex(
+                self.text, r"(?im)^SetEnvIfNoCase Request_URI .*" + re.escape(frag) + r".* sentinel_sensitive=1"
+            )
 
     def test_uses_bytes_without_headers(self):
         # %B (body only) not %O: %O includes TLS/headers overhead (an empty 200 once looked like a leak)

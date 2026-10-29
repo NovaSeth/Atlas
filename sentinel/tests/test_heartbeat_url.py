@@ -1,5 +1,6 @@
 """Optional external heartbeat (audit 5, D4): empty URL = no network call; set = one GET per clean run; the URL
 is never logged."""
+
 import http.server
 import os
 import socket
@@ -52,10 +53,19 @@ class Heartbeat(unittest.TestCase):
 
     def run_esc(self, url):
         self.hb.touch()
-        env = dict(os.environ, SENTINEL_ATLAS=str(self.atlas), SENTINEL_STATE=str(self.d / "st"),
-                   SENTINEL_STREAM_HEARTBEAT=str(self.hb), SENTINEL_EMAIL="nobody@example.com", SENTINEL_NOTIFY_CMD="",
-                   SENTINEL_LANG="en", SENTINEL_RESIDENT_UNIT="", SENTINEL_RESIDENT_SCREEN="",
-                   SENTINEL_HEARTBEAT_URL=url, PATH="%s:%s" % (self.bin, os.environ["PATH"]))
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(self.atlas),
+            SENTINEL_STATE=str(self.d / "st"),
+            SENTINEL_STREAM_HEARTBEAT=str(self.hb),
+            SENTINEL_EMAIL="nobody@example.com",
+            SENTINEL_NOTIFY_CMD="",
+            SENTINEL_LANG="en",
+            SENTINEL_RESIDENT_UNIT="",
+            SENTINEL_RESIDENT_SCREEN="",
+            SENTINEL_HEARTBEAT_URL=url,
+            PATH="%s:%s" % (self.bin, os.environ["PATH"]),
+        )
         r = subprocess.run(["bash", str(ESC)], env=env, capture_output=True, text=True, timeout=90)
         return r.returncode, (self.d / "st" / "escalation.log").read_text()
 
@@ -97,14 +107,18 @@ class PingContract(unittest.TestCase):
 
     def test_empty_and_invalid_urls_never_open(self):
         from unittest import mock
-        with mock.patch.dict(os.environ, {"SENTINEL_HEARTBEAT_URL": ""}), \
-                mock.patch("urllib.request.OpenerDirector.open") as opened:
+
+        with (
+            mock.patch.dict(os.environ, {"SENTINEL_HEARTBEAT_URL": ""}),
+            mock.patch("urllib.request.OpenerDirector.open") as opened,
+        ):
             for url in (None, "", "file:///etc/passwd", "ftp://localhost/x", "http:///nohost", "http://["):
                 self.assertFalse(notify.ping(url))
             opened.assert_not_called()
 
     def test_get_header_timeout_and_status(self):
         from unittest import mock
+
         response = mock.MagicMock()
         response.__enter__.return_value = response
         with mock.patch("urllib.request.OpenerDirector.open", return_value=response) as opened:
@@ -120,10 +134,14 @@ class PingContract(unittest.TestCase):
         import contextlib
         import io
         from unittest import mock
+
         output = io.StringIO()
-        with mock.patch.dict(os.environ, {"SENTINEL_HEARTBEAT_URL": "https://example.com/secret"}), \
-                mock.patch("urllib.request.OpenerDirector.open", side_effect=OSError("secret")), \
-                contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+        with (
+            mock.patch.dict(os.environ, {"SENTINEL_HEARTBEAT_URL": "https://example.com/secret"}),
+            mock.patch("urllib.request.OpenerDirector.open", side_effect=OSError("secret")),
+            contextlib.redirect_stdout(output),
+            contextlib.redirect_stderr(output),
+        ):
             self.assertFalse(notify.ping())
             self.assertEqual(notify.main(["ping"]), 1)
         self.assertEqual(output.getvalue(), "")
@@ -139,6 +157,7 @@ class EscalationPingContract(unittest.TestCase):
     def setUp(self):
         import shlex
         import sys
+
         self.d = tmpdir(self)
         self.atlas, self.bin = self.d / "atlas", self.d / "bin"
         self.atlas.mkdir()
@@ -146,10 +165,17 @@ class EscalationPingContract(unittest.TestCase):
         self.calls = self.d / "ping-calls"
         self.result = self.d / "ping-result"
         self.result.write_text("0")
-        bodies = (("mail", "cat >/dev/null"), ("screen", "exit 0"), ("systemctl", "exit 0"),
-                  ("python3", 'if [ "$1" = -I ] && [ "$3" = ping ]; then\n'
-                   'echo ping >> %s\nexit "$(cat %s)"\nfi\nexec %s "$@"' %
-                   (shlex.quote(str(self.calls)), shlex.quote(str(self.result)), shlex.quote(sys.executable))))
+        bodies = (
+            ("mail", "cat >/dev/null"),
+            ("screen", "exit 0"),
+            ("systemctl", "exit 0"),
+            (
+                "python3",
+                'if [ "$1" = -I ] && [ "$3" = ping ]; then\n'
+                'echo ping >> %s\nexit "$(cat %s)"\nfi\nexec %s "$@"'
+                % (shlex.quote(str(self.calls)), shlex.quote(str(self.result)), shlex.quote(sys.executable)),
+            ),
+        )
         for name, body in bodies:
             stub = self.bin / name
             stub.write_text("#!/bin/bash\n%s\n" % body)
