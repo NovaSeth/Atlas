@@ -1885,11 +1885,28 @@ AGENT_ID = Lazy(r"[A-Za-z0-9_-]{1,64}")
 NOTIFICATION_HEAD = Lazy(r"\s*<task-notification>\s*<task-id>([A-Za-z0-9_-]{1,64})</task-id>")
 
 
+def _agent_flag(state, aid):
+    return "%s.agent-%s.tainted" % (state.path[:-len(".json")], aid)
+
+
+def _touch_agent_flag(state, aid):
+    """Fallback when agent_taint cannot be written: an empty per-agent flag file (needs no data blocks)."""
+    if state.path is None or os.environ.get("TAINT_FAIL_WRITES") == "all":
+        return False
+    try:
+        os.close(os.open(_agent_flag(state, aid), os.O_WRONLY | os.O_CREAT, 0o600))
+        return True
+    except OSError:
+        return False
+
+
 def agent_tainted(state, aid):
     """(source, since) when this subagent read untrusted data, else None. An unknown state or a full map
     (a new subagent cannot be remembered) gates every subagent: ("state unknown", now)."""
     if state.path is None or state.unknown is not None:
         return "state unknown", now_iso()
+    if os.path.lexists(_agent_flag(state, aid)):
+        return "taint-not-persisted", now_iso()  # fallback flag of a failed agent_taint write
     m = state.data.get("agent_taint")
     if m is None:
         return None
@@ -1946,6 +1963,8 @@ def subagent_pre_tool_use(data, tool, ti, cwd):
                     if not state.update(agents=agents):
                         state._touch_flag()  # cannot remember it: taint the parent now (fail closed)
             ok = mark_agent(state, agent_id, src or "nested-agent")
+            if not ok and _touch_agent_flag(state, agent_id):
+                ok = True  # remembered by the fallback flag: the subagent stays gated
     if src:
         log(sid, "PreToolUse", tool, "agent-read", src)
     else:
