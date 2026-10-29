@@ -18,7 +18,7 @@ because someone changed it. If neither the owner nor the resident did it, it is 
 
 Volatile numbers (disk, RAM, load, ban counts) live under "vitals" and are never diffed.
 """
-import contextlib, hashlib, json, os, pwd, re, shutil, subprocess, sys
+import contextlib, hashlib, json, os, pwd, re, shlex, shutil, subprocess, sys
 from datetime import datetime, timezone
 
 # Code and instance state are separate: SENTINEL_ATLAS selects the state directory (baseline, current,
@@ -38,26 +38,62 @@ BASELINE = os.path.join(BASE, "baseline.json")
 SNAPDIR = os.path.join(BASE, "snapshots")
 
 
-def run(cmd, timeout=25):
-    try:
-        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return p.stdout.strip()
-    except Exception as e:
-        return f"__ERROR__ {e}"
+CMD_TIMEOUT = 25         # seconds for an ordinary command
+SLOW_CMD_TIMEOUT = 40    # dpkg-query, certbot
+SETUID_TIMEOUT = 60      # find over /usr /bin /sbin /opt
+ERROR_TEXT_LIMIT = 220   # characters of one recorded measurement error
+CMD_PREVIEW = 70         # characters of a command shown in an error
+SHA_PREFIX = 16          # characters of a sha256 kept in the snapshot
+CERT_ERROR_LIMIT = 200   # characters of a certbot / journal error
+DIFF_VALUE_LIMIT = 160   # characters of an added or removed value in a diff line
+DIFF_CHANGE_LIMIT = 80   # characters of each side of a changed value in a diff line
+OS_RELEASE = "/etc/os-release"
+LOADAVG = "/proc/loadavg"
+PASSWD = "/etc/passwd"
+
+# A command is a string split into an argument list and run WITHOUT a shell: these tokens (and any token
+# made only of shell punctuation, or starting a substitution) are refused instead of being interpreted.
+SHELL_OPERATORS = frozenset({"|", "||", "&", "&&", ";", ";;", ">", ">>", "<", "<<", "2>", "2>>", "&>", "2>&1"})
+_PUNCTUATION = frozenset("();<>|&")
 
 
-def run_checked(cmd, timeout=25):
-    """Like run(), but keeps the exit status: returns (rc, stdout, stderr).
+def argv_of(cmd):
+    """Split `cmd` into an argv list. ValueError on a shell operator, a substitution or a broken quote."""
+    if "$(" in cmd:
+        raise ValueError("shell syntax: command substitution")
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+    lex.whitespace_split = True
+    argv = list(lex)
+    for tok in argv:
+        # a lone ( or ) is an ordinary find(1) argument; a substitution is refused by the `$(` check below
+        punct = all(c in _PUNCTUATION for c in tok) and tok not in ("(", ")")
+        if tok in SHELL_OPERATORS or punct or tok.startswith("`"):
+            raise ValueError("shell syntax: %r" % tok)
+    if not argv:
+        raise ValueError("empty command")
+    return argv
 
-    rc is None when the command could not run at all (timeout, exec error); stdout then
+
+def run_checked(cmd, timeout=CMD_TIMEOUT):
+    """Run `cmd` as an argv list (no shell). Returns (rc, stdout, stderr).
+
+    rc is None when the command could not run at all (timeout, exec error, shell syntax); stdout then
     starts with "__ERROR__". Use it for every measurement whose EMPTY output is meaningful:
     empty output with rc != 0 is "could not measure", never "nothing found".
     """
     try:
-        p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(argv_of(cmd), shell=False, capture_output=True, text=True, timeout=timeout)
         return p.returncode, p.stdout.strip(), p.stderr.strip()
+    except ValueError:
+        return None, f"__ERROR__ shell syntax not supported: {cmd[:CMD_PREVIEW]}", ""
     except Exception as e:
         return None, f"__ERROR__ {e}", ""
+
+
+def run(cmd, timeout=CMD_TIMEOUT):
+    """Stdout of a command that succeeded; None when it failed. A failure is never a value."""
+    rc, out, _ = run_checked(cmd, timeout)
+    return out if rc == 0 else None
 
 
 # Measurement failures of the last snapshot: section -> reason. A collector whose command FAILED
@@ -66,44 +102,54 @@ def run_checked(cmd, timeout=25):
 MEAS_ERRORS = {}
 
 
-def measure(section, cmd, timeout=25, ok=(0,)):
-    """Run a measurement. Returns stdout, or None when the command failed (recorded in MEAS_ERRORS).
+def sink(errors):
+    """The collector a function writes to: its `errors` argument, MEAS_ERRORS when none is given."""
+    return MEAS_ERRORS if errors is None else errors
+
+
+def record(errors, section, text):
+    """Record the first failure of a section (kept short; the first reason is the useful one)."""
+    sink(errors).setdefault(section, text[:ERROR_TEXT_LIMIT])
+
+
+def measure(section, cmd, timeout=CMD_TIMEOUT, ok=(0,), errors=None):
+    """Run a measurement. Returns stdout, or None when the command failed (recorded in `errors`).
 
     A non-zero status outside `ok`, or ANY status != 0 together with stderr output (sudo failing),
     is a failure; an empty stdout with a clean status is a real, empty result.
     """
     rc, out, err = run_checked(cmd, timeout)
     if rc is None or rc not in ok or out.startswith("__ERROR__") or (rc != 0 and err):
-        MEAS_ERRORS.setdefault(section, f"{cmd[:70]} rc={rc} {err or out}"[:220])
+        record(errors, section, f"{cmd[:CMD_PREVIEW]} rc={rc} {err or out}")
         return None
     return out
 
 
-def probe(section, test_cmd):
+def probe(section, test_cmd, errors=None):
     """`sudo test ...` style question: True (rc 0), False (rc 1, silent), None (could not ask)."""
     rc, out, err = run_checked(test_cmd)
     if rc == 0:
         return True
     if rc == 1 and not err and not out:
         return False
-    MEAS_ERRORS.setdefault(section, f"{test_cmd[:70]} rc={rc} {err or out}"[:220])
+    record(errors, section, f"{test_cmd[:CMD_PREVIEW]} rc={rc} {err or out}")
     return None
 
 
-def sha(path, section="local_files"):
-    """Hash of a local file, or None when it cannot be read (recorded in MEAS_ERRORS).
+def sha(path, section="local_files", errors=None):
+    """Hash of a local file, or None when it cannot be read (recorded in `errors`).
 
     A read failure is UNKNOWN, never a value of the snapshot.
     """
     try:
         with open(path, "rb") as f:
-            return hashlib.sha256(f.read()).hexdigest()[:16]
+            return hashlib.sha256(f.read()).hexdigest()[:SHA_PREFIX]
     except Exception as e:
-        MEAS_ERRORS.setdefault(section, f"read {path}: {e}"[:220])
+        record(errors, section, f"read {path}: {e}")
         return None
 
 
-def local_isdir(path, section="local_files"):
+def local_isdir(path, section="local_files", errors=None):
     """True/False for a directory that exists/is really absent; None (recorded) when stat fails otherwise."""
     try:
         os.stat(path)
@@ -111,18 +157,18 @@ def local_isdir(path, section="local_files"):
     except (FileNotFoundError, NotADirectoryError):
         return False
     except OSError as e:
-        MEAS_ERRORS.setdefault(section, f"stat {path}: {e}"[:220])
+        record(errors, section, f"stat {path}: {e}")
         return None
 
 
-def local_listdir(path, section="local_files"):
+def local_listdir(path, section="local_files", errors=None):
     """Sorted directory entries; [] for a really absent directory; [] plus a recorded error when unreadable."""
-    if not local_isdir(path, section):
+    if not local_isdir(path, section, errors):
         return []
     try:
         return sorted(os.listdir(path))
     except OSError as e:
-        MEAS_ERRORS.setdefault(section, f"list {path}: {e}"[:220])
+        record(errors, section, f"list {path}: {e}")
         return []
 
 
@@ -138,21 +184,23 @@ def have(tool):
     return shutil.which(tool, path=TOOL_PATH) is not None
 
 
-def services():
-    out = measure("services", "systemctl list-units --type=service --state=running --no-legend --plain") or ""
+def services(errors=None):
+    out = measure("services", "systemctl list-units --type=service --state=running --no-legend --plain",
+                  errors=errors) or ""
     names = sorted(l.split()[0] for l in out.splitlines() if l.strip())
-    enabled = measure("services", "systemctl list-unit-files --state=enabled --no-legend --plain") or ""
+    enabled = measure("services", "systemctl list-unit-files --state=enabled --no-legend --plain",
+                      errors=errors) or ""
     en = sorted(l.split()[0] for l in enabled.splitlines() if l.strip())
     return {"running": names, "enabled": en}
 
 
-def timers():
-    out = measure("timers", "systemctl list-timers --all --no-legend --plain") or ""
+def timers(errors=None):
+    out = measure("timers", "systemctl list-timers --all --no-legend --plain", errors=errors) or ""
     return sorted(re.sub(r"\s+", " ", l).split(" ")[-2] for l in out.splitlines() if ".timer" in l)
 
 
-def listeners():
-    out = measure("listeners", "sudo ss -tulnpH") or ""
+def listeners(errors=None):
+    out = measure("listeners", "sudo ss -tulnpH", errors=errors) or ""
     res = []
     for line in out.splitlines():
         f = line.split()
@@ -164,11 +212,11 @@ def listeners():
     return sorted(set(res))
 
 
-def containers():
+def containers(errors=None):
     if not have("docker"):
         return {}
     # through sudo: the alternative (the atlas user in the docker group) is root-equivalent
-    out = measure("containers", "sudo docker ps --format '{{.Names}}|{{.Image}}|{{.Ports}}'") or ""
+    out = measure("containers", "sudo docker ps --format '{{.Names}}|{{.Image}}|{{.Ports}}'", errors=errors) or ""
     res = {}
     for line in out.splitlines():
         if "|" in line:
@@ -177,38 +225,48 @@ def containers():
     return res
 
 
-def accounts():
+def key_fingerprints(ak, errors=None):
+    """`name comment` of every key in an authorized_keys file (empty file = no keys)."""
+    quoted = shlex.quote(ak)
+    if not probe("accounts", f"sudo test -s {quoted}", errors):
+        return []
+    fp = measure("accounts", f"sudo ssh-keygen -lf {quoted}", errors=errors) or ""
+    keys = []
+    for k in fp.splitlines():
+        parts = k.split()
+        if len(parts) >= 3:
+            keys.append(f"{parts[1]} {' '.join(parts[2:-1])}")
+    return sorted(keys)
+
+
+def accounts(errors=None):
     users = {}
-    for line in open("/etc/passwd"):
+    with open(PASSWD) as f:
+        lines = f.read().splitlines()
+    for line in lines:
         n, _, uid, gid, _, home, shell = line.strip().split(":")
         if shell.endswith(("nologin", "false", "sync")):
             continue
-        keys = []
-        ak = os.path.join(home, ".ssh/authorized_keys")
-        if probe("accounts", f"sudo test -s {ak}"):   # empty file = no keys
-            fp = measure("accounts", f"sudo ssh-keygen -lf {ak}") or ""
-            for k in fp.splitlines():
-                parts = k.split()
-                if len(parts) >= 3:
-                    keys.append(f"{parts[1]} {' '.join(parts[2:-1])}")
-        users[n] = {"uid": int(uid), "shell": shell, "keys": sorted(keys)}
+        keys = key_fingerprints(os.path.join(home, ".ssh/authorized_keys"), errors)
+        users[n] = {"uid": int(uid), "shell": shell, "keys": keys}
     return users
 
 
-def sudoers():
+def sudoers(errors=None):
     res = {}
-    h0 = measure("sudoers", "sudo sha256sum /etc/sudoers")
+    h0 = measure("sudoers", "sudo sha256sum /etc/sudoers", errors=errors)
     if h0:
-        res["/etc/sudoers"] = h0.split()[0][:16]
-    out = measure("sudoers", "sudo ls /etc/sudoers.d") or ""
+        res["/etc/sudoers"] = h0.split()[0][:SHA_PREFIX]
+    out = measure("sudoers", "sudo ls /etc/sudoers.d", errors=errors) or ""
     for f in out.split():
-        h = measure("sudoers", f"sudo sha256sum /etc/sudoers.d/{f}")
+        path = f"/etc/sudoers.d/{f}"
+        h = measure("sudoers", f"sudo sha256sum {shlex.quote(path)}", errors=errors)
         if h:
-            res[f"/etc/sudoers.d/{f}"] = h.split()[0][:16]
+            res[path] = h.split()[0][:SHA_PREFIX]
     return res
 
 
-def vhosts():
+def vhosts(errors=None):
     """Vhosts AND global config fragments (conf-enabled).
 
     Gap found in practice: a file added to conf-enabled (an ACME alias) went unnoticed while
@@ -219,63 +277,68 @@ def vhosts():
     d = "/etc/apache2/sites-enabled"
     res = {}
     d2 = "/etc/apache2/conf-enabled"
-    for f in local_listdir(d2, "vhosts"):
-        txt = measure("vhosts", f"sudo cat {d2}/{f}") or ""
-        h = measure("vhosts", f"sudo sha256sum {d2}/{f}")
+    for f in local_listdir(d2, "vhosts", errors):
+        path = shlex.quote(f"{d2}/{f}")
+        txt = measure("vhosts", f"sudo cat {path}", errors=errors) or ""
+        h = measure("vhosts", f"sudo sha256sum {path}", errors=errors)
         if not h:
             continue
         res[f"conf-enabled/{f}"] = {
             "alias": sorted(set(re.findall(r"^\s*Alias(?:Match)?\s+(\S+)", txt, re.M))),
-            "sha": h.split()[0][:16],
+            "sha": h.split()[0][:SHA_PREFIX],
         }
-    for f in local_listdir(d, "vhosts"):
-        txt = measure("vhosts", f"sudo cat {d}/{f}") or ""
+    for f in local_listdir(d, "vhosts", errors):
+        path = shlex.quote(f"{d}/{f}")
+        txt = measure("vhosts", f"sudo cat {path}", errors=errors) or ""
         names = sorted(set(re.findall(r"^\s*Server(?:Name|Alias)\s+(\S+)", txt, re.M)))
         roots = sorted(set(re.findall(r"^\s*DocumentRoot\s+(\S+)", txt, re.M)))
         proxies = sorted(set(re.findall(r"^\s*ProxyPass\s+\S+\s+(\S+)", txt, re.M)))
-        h = sha(f"{d}/{f}", "vhosts")
+        h = sha(f"{d}/{f}", "vhosts", errors)
         if h:
             res[f] = {"names": names, "root": roots, "proxy": proxies, "sha": h}
     return res
 
 
-def crontab_users(passwd="/etc/passwd"):
+def crontab_users(passwd=PASSWD, errors=None):
     """Everyone in /etc/passwd + every file in /var/spool/cron/crontabs (a new account cannot slip by)."""
     u = set()
     try:
-        for line in open(passwd):
-            if ":" in line and not line.startswith("#"):
-                u.add(line.split(":")[0])
+        with open(passwd) as f:
+            for line in f:
+                if ":" in line and not line.startswith("#"):
+                    u.add(line.split(":")[0])
     except OSError:
         pass
-    if probe("crontabs", "sudo test -d /var/spool/cron/crontabs"):
-        out = measure("crontabs", "sudo ls /var/spool/cron/crontabs") or ""
+    if probe("crontabs", "sudo test -d /var/spool/cron/crontabs", errors):
+        out = measure("crontabs", "sudo ls /var/spool/cron/crontabs", errors=errors) or ""
         u |= set(out.split())
     return sorted(u)
 
 
-def crontabs():
+def crontabs(errors=None):
     res = {}
-    for u in crontab_users():
-        rc, out, err = run_checked(f"sudo crontab -u {u} -l")
+    for u in crontab_users(errors=errors):
+        rc, out, err = run_checked(f"sudo crontab -u {shlex.quote(u)} -l")
         if rc == 1 and "no crontab" in err:
             out = ""     # a user without a crontab is a real, empty result
         elif rc != 0:
-            MEAS_ERRORS.setdefault("crontabs", f"crontab -u {u} rc={rc} {err or out}"[:220])
+            record(errors, "crontabs", f"crontab -u {u} rc={rc} {err or out}")
             continue
         lines = [l for l in out.splitlines() if l.strip() and not l.startswith("#")]
         if lines:
-            res[u] = {"lines": len(lines), "sha": hashlib.sha256("\n".join(lines).encode()).hexdigest()[:16]}
-    for f in local_listdir("/etc/cron.d", "crontabs"):
-        h = sha(f"/etc/cron.d/{f}", "crontabs")
+            digest = hashlib.sha256("\n".join(lines).encode()).hexdigest()[:SHA_PREFIX]
+            res[u] = {"lines": len(lines), "sha": digest}
+    for f in local_listdir("/etc/cron.d", "crontabs", errors):
+        h = sha(f"/etc/cron.d/{f}", "crontabs", errors)
         if h:
             res[f"cron.d/{f}"] = {"sha": h}
     return res
 
 
-def packages():
+def packages(errors=None):
     """Installed packages (status ii) as a sorted list of `name=version`."""
-    out = measure("packages", "dpkg-query -W -f='${db:Status-Abbrev} ${Package}=${Version}\\n'", timeout=40) or ""
+    out = measure("packages", "dpkg-query -W -f='${db:Status-Abbrev} ${Package}=${Version}\\n'",
+                  timeout=SLOW_CMD_TIMEOUT, errors=errors) or ""
     res = []
     for l in out.splitlines():
         f = l.split()
@@ -374,7 +437,7 @@ def ssl_vhost_count(sites_dir=None):
         return 0
     count = 0
     for f in local_listdir(sites_dir, "vhosts"):
-        rc, out, err = run_checked(f"sudo cat {sites_dir}/{f}")
+        rc, out, err = run_checked(f"sudo cat {shlex.quote(f'{sites_dir}/{f}')}")
         if rc != 0:
             return None
         if _SSL_VHOST.search(out):
@@ -401,9 +464,9 @@ def certs_measure():
     """
     if not have("certbot"):
         return {}, ""   # not installed: no certificates to watch (an SSL vhost without certs still shows)
-    rc, out, err = run_checked("sudo certbot certificates", timeout=40)
+    rc, out, err = run_checked("sudo certbot certificates", timeout=SLOW_CMD_TIMEOUT)
     if rc is None or rc != 0 or out.startswith("__ERROR__"):
-        return {}, f"certbot rc={rc} {err or out}"[:200]
+        return {}, f"certbot rc={rc} {err or out}"[:CERT_ERROR_LIMIT]
     res, name = {}, None
     for line in out.splitlines():
         line = line.strip()
@@ -434,15 +497,16 @@ def certs():
     return certs_measure()[0]
 
 
-def setuid():
-    out = measure("setuid", "sudo find /usr /bin /sbin /opt -xdev -perm -4000 -type f", timeout=60) or ""
+def setuid(errors=None):
+    out = measure("setuid", "sudo find /usr /bin /sbin /opt -xdev -perm -4000 -type f",
+                  timeout=SETUID_TIMEOUT, errors=errors) or ""
     return sorted(out.split())
 
 
-def firewall():
+def firewall(errors=None):
     if not have("ufw"):
         return []
-    out = measure("firewall", "sudo ufw status numbered") or ""
+    out = measure("firewall", "sudo ufw status numbered", errors=errors) or ""
     return [re.sub(r"\s+", " ", l.strip()) for l in out.splitlines() if l.strip().startswith("[")]
 
 
@@ -450,17 +514,85 @@ APT_LIST = "/etc/apt/sources.list"
 APT_DIR = "/etc/apt/sources.list.d"
 
 
-def apt_sources():
+def apt_sources(errors=None):
     res = {}
-    for p in [APT_LIST] + [os.path.join(APT_DIR, f) for f in local_listdir(APT_DIR, "apt_sources")]:
+    for p in [APT_LIST] + [os.path.join(APT_DIR, f) for f in local_listdir(APT_DIR, "apt_sources", errors)]:
         if os.path.exists(p):
-            h = sha(p, "apt_sources")
+            h = sha(p, "apt_sources", errors)
             if h:
                 res[p] = h
     return res
 
 
-def sensitive_files():
+# What an attacker uses to persist or alters to hide traces (see sensitive_files).
+UNIT_DIRS = ("/etc/systemd/system", "/etc/systemd/user", "/usr/local/lib/systemd/system")
+UNIT_SUFFIXES = (".service", ".timer", ".socket", ".path")
+SINGLE_FILES = ("/etc/ld.so.preload", "/etc/hosts", "/etc/resolv.conf", "/etc/nsswitch.conf",
+                "/etc/pam.d/sshd", "/etc/ssh/sshd_config", "/etc/profile", "/etc/bash.bashrc",
+                "/etc/rc.local", "/etc/environment")
+WATCHED_DIRS = ("/etc/cron.hourly", "/etc/cron.daily", "/etc/profile.d", "/etc/sudoers.d",
+                "/etc/ssh/sshd_config.d", "/etc/apt/apt.conf.d")
+HOST_KEY_FILES = ("/etc/ssh/ssh_host_ed25519_key.pub", "/etc/ssh/ssh_host_rsa_key.pub")
+
+
+def sensitive_hash(path, errors=None):
+    h = measure("sensitive_files", f"sudo sha256sum {shlex.quote(path)}", errors=errors)
+    return h.split()[0][:SHA_PREFIX] if h else None
+
+
+def unit_hashes(errors=None):
+    """Hashes of systemd units added by hand (not from packages)."""
+    res = {}
+    for d in UNIT_DIRS:
+        if not probe("sensitive_files", f"sudo test -d {shlex.quote(d)}", errors):
+            continue
+        # the argument list sudoers pins (examples/sudoers.d/atlas); the suffix filter below is a second guard
+        out = measure("sensitive_files", f"sudo find {shlex.quote(d)} -maxdepth 2 -type f \\( -name '*.service' "
+                      "-o -name '*.timer' -o -name '*.socket' -o -name '*.path' \\)", errors=errors) or ""
+        for f in sorted(x for x in out.split() if x.endswith(UNIT_SUFFIXES)):
+            h = sensitive_hash(f, errors)
+            if h:
+                res[f] = h
+    return res
+
+
+def single_file_hashes(errors=None):
+    """Single files with a large blast radius; a really absent file is a recorded fact."""
+    res = {}
+    for f in SINGLE_FILES:
+        exists = probe("sensitive_files", f"sudo test -e {shlex.quote(f)}", errors)
+        if exists:
+            h = sensitive_hash(f, errors)
+            if h:
+                res[f] = h
+        elif exists is False:
+            res[f] = "__absent (good)__"
+    return res
+
+
+def dir_listings(errors=None):
+    """Directories where a file appearing out of nowhere is a signal in itself."""
+    res = {}
+    for d in WATCHED_DIRS:
+        if probe("sensitive_files", f"sudo test -d {shlex.quote(d)}", errors):
+            listing = measure("sensitive_files", f"sudo ls -1 {shlex.quote(d)}", errors=errors) or ""
+            res[f"{d}/"] = sorted(listing.split())
+        else:
+            res[f"{d}/"] = []
+    return res
+
+
+def host_key_fingerprints(errors=None):
+    """SSH host keys - a swap = preparation for eavesdropping."""
+    keys = []
+    for kf in HOST_KEY_FILES:
+        if probe("sensitive_files", f"sudo test -e {shlex.quote(kf)}", errors):
+            out = measure("sensitive_files", f"sudo ssh-keygen -lf {shlex.quote(kf)}", errors=errors) or ""
+            keys += [l.split()[1] for l in out.splitlines() if len(l.split()) > 2]
+    return sorted(keys)
+
+
+def sensitive_files(errors=None):
     """Files an attacker uses to persist - or alters to hide traces.
 
     The atlas used to look only at what RUNS (services running/enabled). This function looks
@@ -468,45 +600,11 @@ def sensitive_files():
     resolver. Classic persistence mechanisms do not show up in `systemctl` until they are
     started - and by then it is too late to detect them as news.
     """
-    def hash_of(path):
-        h = measure("sensitive_files", f"sudo sha256sum {path}")
-        return h.split()[0][:16] if h else None
-
     res = {}
-    # systemd units added by hand (not from packages)
-    for d in ("/etc/systemd/system", "/etc/systemd/user", "/usr/local/lib/systemd/system"):
-        if not probe("sensitive_files", f"sudo test -d {d}"):
-            continue
-        out = measure("sensitive_files", f"sudo find {d} -maxdepth 2 -type f \\( -name '*.service' -o -name '*.timer' -o -name '*.socket' -o -name '*.path' \\)") or ""
-        for f in sorted(out.split()):
-            h = hash_of(f)
-            if h:
-                res[f] = h
-    # single files with a large blast radius
-    for f in ("/etc/ld.so.preload", "/etc/hosts", "/etc/resolv.conf", "/etc/nsswitch.conf",
-              "/etc/pam.d/sshd", "/etc/ssh/sshd_config", "/etc/profile", "/etc/bash.bashrc",
-              "/etc/rc.local", "/etc/environment"):
-        exists = probe("sensitive_files", f"sudo test -e {f}")
-        if exists:
-            h = hash_of(f)
-            if h:
-                res[f] = h
-        elif exists is False:
-            res[f] = "__absent (good)__"
-    # directories where a file appearing out of nowhere is a signal in itself
-    for d in ("/etc/cron.hourly", "/etc/cron.daily", "/etc/profile.d", "/etc/sudoers.d",
-              "/etc/ssh/sshd_config.d", "/etc/apt/apt.conf.d"):
-        if probe("sensitive_files", f"sudo test -d {d}"):
-            res[f"{d}/"] = sorted((measure("sensitive_files", f"sudo ls -1 {d}") or "").split())
-        else:
-            res[f"{d}/"] = []
-    # SSH host keys - a swap = preparation for eavesdropping
-    keys = []
-    for kf in ("/etc/ssh/ssh_host_ed25519_key.pub", "/etc/ssh/ssh_host_rsa_key.pub"):
-        if probe("sensitive_files", f"sudo test -e {kf}"):
-            out = measure("sensitive_files", f"sudo ssh-keygen -lf {kf}") or ""
-            keys += [l.split()[1] for l in out.splitlines() if len(l.split()) > 2]
-    res["__ssh_host_keys__"] = sorted(keys)
+    res.update(unit_hashes(errors))
+    res.update(single_file_hashes(errors))
+    res.update(dir_listings(errors))
+    res["__ssh_host_keys__"] = host_key_fingerprints(errors)
     return res
 
 
@@ -526,20 +624,21 @@ def silent_failures_checked():
     res, unknown = {}, {}
     rc, out, err = run_checked("systemctl list-timers --all --no-legend --plain")
     if rc != 0:
-        return res, {"list-timers": f"rc={rc} {err or out}"[:200]}
+        return res, {"list-timers": f"rc={rc} {err or out}"[:CERT_ERROR_LIMIT]}
     services_ = set()
     for line in out.splitlines():
         m = re.search(r"(\S+\.service)\s*$", line.strip())
-        if m: services_.add(m.group(1))
+        if m:
+            services_.add(m.group(1))
     for u in sorted(services_):
         # We alarm on the CURRENT STATE, not on history: what counts is whether the LAST run
         # ended in an error. The first version counted failures over 7 days and so would have
         # kept glowing for a week after the fix - and an alarm that burns for a week teaches
         # the human to ignore it. History stays as context alongside, not as a reason to alarm.
         # No masking pipe: the journal status is checked, the filtering happens here.
-        rc, jout, jerr = run_checked(f"sudo journalctl -u {u} --since -14d -o short-iso --no-pager")
+        rc, jout, jerr = run_checked(f"sudo journalctl -u {shlex.quote(u)} --since -14d -o short-iso --no-pager")
         if rc != 0:
-            unknown[u] = f"journalctl rc={rc} {jerr or jout}"[:200]
+            unknown[u] = f"journalctl rc={rc} {jerr or jout}"[:CERT_ERROR_LIMIT]
             continue
         lines = [l for l in jout.splitlines() if re.search("Failed with result|Succeeded|Finished", l)]
         if not lines:
@@ -547,7 +646,7 @@ def silent_failures_checked():
         last = lines[-1]
         if "Failed with result" not in last:
             continue
-        rc7, j7, e7 = run_checked(f"sudo journalctl -u {u} --since -7d --no-pager")
+        rc7, j7, e7 = run_checked(f"sudo journalctl -u {shlex.quote(u)} --since -7d --no-pager")
         failures = sum(1 for l in j7.splitlines() if "Failed with result" in l) if rc7 == 0 else "?"
         when = last.split()[0] if last.split() else "?"
         # human-facing text (lands in ALERT): from the catalog
@@ -559,55 +658,143 @@ def silent_failures():
     return silent_failures_checked()[0]
 
 
-def vitals():
-    disk = run("df -h / | tail -1").split()
-    mem = run("free -m | awk 'NR==2{print $7}'")
+def os_pretty_name(path=OS_RELEASE):
+    """PRETTY_NAME of an os-release file, or None when it cannot be read or has no such line."""
+    try:
+        with open(path) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if line.startswith("PRETTY_NAME="):
+            try:
+                words = shlex.split(line.split("=", 1)[1])
+            except ValueError:
+                return None
+            return " ".join(words) or None
+    return None
+
+
+def host_info(errors=None):
+    """Kernel, OS and first address. A value that could not be measured is "?" plus a recorded error."""
+    kernel = measure("host", "uname -r", errors=errors)
+    ips = measure("host", "hostname -I", errors=errors)
+    pretty = os_pretty_name()
+    if pretty is None:
+        record(errors, "host", f"read {OS_RELEASE}: no PRETTY_NAME")
+    return {"kernel": kernel or "?", "os": pretty or "?", "ip": ips.split()[0] if ips and ips.split() else "?"}
+
+
+def vital_disk(bad):
+    """(used_pct, avail) of `/` from the last line of `df -h /`."""
+    out = run("df -h /")
+    fields = out.splitlines()[-1].split() if out and out.splitlines() else []
+    if len(fields) > 4:
+        return fields[4], fields[3]
+    bad["disk"] = "df -h / failed" if out is None else "df -h / gave no usable line"
+    return "?", "?"
+
+
+def vital_mem(bad):
+    """Available MB: the 7th column of the `Mem:` line of `free -m` (the second line)."""
+    out = run("free -m")
+    lines = out.splitlines() if out else []
+    fields = lines[1].split() if len(lines) > 1 else []
+    if len(fields) > 6:
+        return fields[6]
+    bad["mem"] = "free -m failed" if out is None else "free -m gave no usable line"
+    return "?"
+
+
+def vital_load(bad):
+    """The three load averages, read from /proc/loadavg."""
+    try:
+        with open(LOADAVG) as f:
+            return " ".join(f.read().split()[:3])
+    except OSError as e:
+        bad["load"] = f"read {LOADAVG}: {e}"
+        return "?"
+
+
+def vital_banned(bad):
+    """Currently banned addresses of the sshd jail; "" when fail2ban is not installed."""
+    if not have("fail2ban-client"):
+        return ""     # only when installed: sudo logs "command not allowed" for a binary that does not exist
+    out = run("sudo fail2ban-client status sshd")
+    if out is None:
+        bad["banned"] = "fail2ban-client status sshd failed"
+        return "?"
+    m = re.search(r"Currently banned:\s+(\d+)", out)
+    return m.group(1) if m else ""
+
+
+def vital_failed_units(bad):
+    out = run("systemctl --failed --no-legend --plain")
+    if out is None:
+        bad["failed_units"] = "systemctl --failed failed"
+        return "?"
+    return str(len([l for l in out.splitlines() if l.strip()]))
+
+
+def vital_uptime(bad):
+    out = run("uptime -p")
+    if out is None:
+        bad["uptime"] = "uptime -p failed"
+        return "?"
+    return out
+
+
+def vitals(errors=None):
+    """Volatile numbers (never diffed). A failed command is "?" plus a reason in `vitals_errors`, never a value.
+
+    These failures are not mirrored into `errors`: thresholds() turns "?" disk/RAM into UNKNOWN, and an
+    optional tool that flaps must not block bless.
+    """
+    bad = {}
+    used, avail = vital_disk(bad)
     sf, su = silent_failures_checked()
-    return {
-        "disk_used_pct": disk[4] if len(disk) > 4 else "?",
-        "disk_avail": disk[3] if len(disk) > 3 else "?",
-        "mem_available_mb": mem,
-        "load": run("cut -d' ' -f1-3 /proc/loadavg"),
-        "uptime": run("uptime -p"),
-        # only when installed: sudo logs "command not allowed" for a binary that does not exist
-        "banned_sshd": run("sudo fail2ban-client status sshd 2>/dev/null | grep -oP 'Currently banned:\\s+\\K\\d+'")
-        if have("fail2ban-client") else "",
-        "failed_units": run("systemctl --failed --no-legend --plain | wc -l"),
+    res = {
+        "disk_used_pct": used,
+        "disk_avail": avail,
+        "mem_available_mb": vital_mem(bad),
+        "load": vital_load(bad),
+        "uptime": vital_uptime(bad),
+        "banned_sshd": vital_banned(bad),
+        "failed_units": vital_failed_units(bad),
         "silent_failures": sf,
         "silent_unknown": su,
         # optional tools that are not installed: skipped on purpose, shown by `show` (never diffed)
         "not_present": [tool for tool in OPTIONAL_TOOLS if not have(tool)],
     }
+    if bad:
+        res["vitals_errors"] = bad
+    return res
+
+
+# The collectors of the snapshot, in snapshot order. Every entry is f(errors=None); snapshot() passes one
+# error collector to all of them. (certs and host come first and separately: certs_measure returns a pair.)
+SECTIONS = {
+    "services": services, "timers": timers, "listeners": listeners, "containers": containers,
+    "accounts": accounts, "sudoers": sudoers, "vhosts": vhosts, "crontabs": crontabs,
+    "packages": packages, "setuid": setuid, "sensitive_files": sensitive_files, "firewall": firewall,
+    "apt_sources": apt_sources, "vitals": vitals,
+}
 
 
 def snapshot():
-    MEAS_ERRORS.clear()
+    errors = {}
     certs_, certs_error = certs_measure()
     snap = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "host": {
-            "kernel": run("uname -r"),
-            "os": run(". /etc/os-release && echo $PRETTY_NAME"),
-            "ip": run("hostname -I").split()[0] if run("hostname -I") else "?",
-        },
-        "services": services(),
-        "timers": timers(),
-        "listeners": listeners(),
-        "containers": containers(),
-        "accounts": accounts(),
-        "sudoers": sudoers(),
-        "vhosts": vhosts(),
-        "crontabs": crontabs(),
+        "host": host_info(errors),
         "certs": certs_,
-        "packages": packages(),
-        "setuid": setuid(),
-        "sensitive_files": sensitive_files(),
-        "firewall": firewall(),
-        "apt_sources": apt_sources(),
-        "vitals": vitals(),
     }
+    for name, collect in SECTIONS.items():
+        snap[name] = collect(errors)
+    MEAS_ERRORS.clear()
+    MEAS_ERRORS.update(errors)
     snap["vitals"]["certs_error"] = certs_error
-    snap["vitals"]["measure_errors"] = dict(MEAS_ERRORS)
+    snap["vitals"]["measure_errors"] = dict(errors)
     return snap
 
 
@@ -622,9 +809,9 @@ def diff(old, new, path=""):
                 continue
             p = f"{path}.{k}" if path else k
             if k not in new:
-                out.append(f"- REMOVED {p} = {json.dumps(old[k], ensure_ascii=False)[:160]}")
+                out.append(f"- REMOVED {p} = {json.dumps(old[k], ensure_ascii=False)[:DIFF_VALUE_LIMIT]}")
             elif k not in old:
-                out.append(f"+ ADDED   {p} = {json.dumps(new[k], ensure_ascii=False)[:160]}")
+                out.append(f"+ ADDED   {p} = {json.dumps(new[k], ensure_ascii=False)[:DIFF_VALUE_LIMIT]}")
             else:
                 out += diff(old[k], new[k], p)
     elif isinstance(old, list) and isinstance(new, list):
@@ -633,7 +820,7 @@ def diff(old, new, path=""):
         for x in sorted(set(map(json.dumps, new)) - set(map(json.dumps, old))):
             out.append(f"+ ADDED   {path}: {json.loads(x)}")
     elif old != new:
-        out.append(f"~ CHANGED {path}: {json.dumps(old, ensure_ascii=False)[:80]} -> {json.dumps(new, ensure_ascii=False)[:80]}")
+        out.append(f"~ CHANGED {path}: {json.dumps(old, ensure_ascii=False)[:DIFF_CHANGE_LIMIT]} -> {json.dumps(new, ensure_ascii=False)[:DIFF_CHANGE_LIMIT]}")
     return out
 
 
@@ -728,9 +915,18 @@ def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def read_object(path):
+    """The JSON object stored in `path`. OSError or ValueError when unreadable or not an object (null, list, ...)."""
+    with open(path) as f:
+        obj = json.load(f)
+    if not isinstance(obj, dict):
+        raise ValueError("%s: not a JSON object (%s)" % (path, type(obj).__name__))
+    return obj
+
+
 def cmd_bless():
     try:
-        cur = json.load(open(CURRENT))
+        cur = read_object(CURRENT)
     except (OSError, ValueError) as e:
         print(t("atlas.current_unreadable", error=e), file=sys.stderr)
         return 2
@@ -740,7 +936,7 @@ def cmd_bless():
         return 2
     first = not os.path.exists(BASELINE)
     try:
-        old = None if first else json.load(open(BASELINE))
+        old = None if first else read_object(BASELINE)
     except (OSError, ValueError):
         old = None   # an unreadable old baseline is replaced; every section counts as changed below
     sections = changed_sections(old, cur) if old is not None else sorted(k for k in cur if k not in IGNORE)
@@ -809,56 +1005,78 @@ def measure_errors_text(errors):
     return "\n".join(f"  {k}: {v}" for k, v in sorted(errors.items()))
 
 
-def main():
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "check"
-    if cmd == "bless":
-        return cmd_bless()
-    if cmd == "ack":
-        return cmd_ack()
-    if cmd in ("thresholds", "silent"):
-        # read-only: reads current.json written by `check` in the same patrol run
-        try:
-            snap = json.load(open(CURRENT))
-        except (OSError, ValueError) as e:
-            print(t("atlas.current_unreadable", error=e), file=sys.stderr)  # human-facing (ALERT)
-            return 2
-        if cmd == "silent":
-            # exit 0 clean, 1 failures found, 2 could not measure
-            txt, u = silent_text(snap), silent_unknown_text(snap)
-            if u:
-                print(t("atlas.silent_cannot_judge") + "\n" + u + (("\n" + txt) if txt else ""), file=sys.stderr)
-                return 2
-            if txt:
-                print(txt)
-                return 1
-            return 0
-        alarms, unknown = thresholds(snap, ssl_vhost_count())
-        for l in alarms:
-            print("  " + l)
-        for l in unknown:
-            print("  " + l, file=sys.stderr)
-        return 2 if unknown else (1 if alarms else 0)
+def load_current():
+    """(snapshot, None) from current.json, or (None, exit code 2) after printing why it is unreadable."""
+    try:
+        return read_object(CURRENT), None
+    except (OSError, ValueError) as e:
+        print(t("atlas.current_unreadable", error=e), file=sys.stderr)  # human-facing (ALERT)
+        return None, 2
+
+
+def cmd_silent():
+    """Read-only. Exit 0 clean, 1 failures found, 2 could not measure."""
+    snap, rc = load_current()
+    if snap is None:
+        return rc
+    txt, u = silent_text(snap), silent_unknown_text(snap)
+    if u:
+        print(t("atlas.silent_cannot_judge") + "\n" + u + (("\n" + txt) if txt else ""), file=sys.stderr)
+        return 2
+    if txt:
+        print(txt)
+        return 1
+    return 0
+
+
+def cmd_thresholds():
+    """Read-only: reads current.json written by `check` in the same patrol run."""
+    snap, rc = load_current()
+    if snap is None:
+        return rc
+    alarms, unknown = thresholds(snap, ssl_vhost_count())
+    for l in alarms:
+        print("  " + l)
+    for l in unknown:
+        print("  " + l, file=sys.stderr)
+    return 2 if unknown else (1 if alarms else 0)
+
+
+def take_snapshot():
+    """Measure, then write current.json and the hourly copy under snapshots/."""
     snap = snapshot()
     write(snap, CURRENT)
     os.makedirs(SNAPDIR, exist_ok=True)
     write(snap, os.path.join(SNAPDIR, snap["generated_at"][:13].replace(":", "") + ".json"))
-    if cmd == "snap":
-        print("snapshot ok")
-        return 0
-    if cmd == "show":
-        v = snap["vitals"]
-        print(f"{snap['host']['os']} / {snap['host']['kernel']} / {snap['host']['ip']}  up {v['uptime']}")
-        print(t("atlas.show_disk", used=v["disk_used_pct"], avail=v["disk_avail"], mem=v["mem_available_mb"],
-                load=v["load"], bans=v["banned_sshd"]))
-        print(t("atlas.show_services", count=len(snap["services"]["running"]),
-                containers=", ".join(snap["containers"])))
-        print(t("atlas.show_vhosts", vhosts=len(snap["vhosts"]), ports=len(snap["listeners"]),
-                accounts=", ".join(snap["accounts"])))
-        for d, c in sorted(snap["certs"].items(), key=lambda x: -1 if x[1]["days"] is None else x[1]["days"])[:3]:
-            print(t("atlas.show_cert", name=d, days=c["days"] if c["days"] is not None else "?"))
-        if v.get("not_present"):
-            print(t("atlas.show_not_present", tools=", ".join(v["not_present"])))
-        return 0
+    return snap
+
+
+def cmd_snap():
+    take_snapshot()
+    print("snapshot ok")
+    return 0
+
+
+def cmd_show():
+    snap = take_snapshot()
+    v = snap["vitals"]
+    print(f"{snap['host']['os']} / {snap['host']['kernel']} / {snap['host']['ip']}  up {v['uptime']}")
+    print(t("atlas.show_disk", used=v["disk_used_pct"], avail=v["disk_avail"], mem=v["mem_available_mb"],
+            load=v["load"], bans=v["banned_sshd"]))
+    print(t("atlas.show_services", count=len(snap["services"]["running"]),
+            containers=", ".join(snap["containers"])))
+    print(t("atlas.show_vhosts", vhosts=len(snap["vhosts"]), ports=len(snap["listeners"]),
+            accounts=", ".join(snap["accounts"])))
+    for d, c in sorted(snap["certs"].items(), key=lambda x: -1 if x[1]["days"] is None else x[1]["days"])[:3]:
+        print(t("atlas.show_cert", name=d, days=c["days"] if c["days"] is not None else "?"))
+    if v.get("not_present"):
+        print(t("atlas.show_not_present", tools=", ".join(v["not_present"])))
+    return 0
+
+
+def cmd_check():
+    """Snapshot + diff against the baseline: 0 no changes, 1 changes, 2 UNKNOWN (failed measurement, no baseline)."""
+    snap = take_snapshot()
     if snap["vitals"].get("measure_errors"):
         # human-facing (lands in ALERT): a failed measurement is UNKNOWN, never an empty inventory
         print(t("atlas.measure_failed") + "\n" + measure_errors_text(snap["vitals"]["measure_errors"]),
@@ -868,7 +1086,12 @@ def main():
         # never an implicit baseline: whatever state the host is in on the first run would become "normal"
         print(t("atlas.no_baseline"), file=sys.stderr)
         return 2
-    changes = shorten_packages(diff(json.load(open(BASELINE)), snap))
+    try:
+        baseline = read_object(BASELINE)
+    except (OSError, ValueError) as e:
+        print(t("atlas.current_unreadable", error=e), file=sys.stderr)
+        return 2
+    changes = shorten_packages(diff(baseline, snap))
     if not changes:
         print("ATLAS OK - no changes")
         return 0
@@ -876,6 +1099,16 @@ def main():
     for c in changes:
         print("  " + c)
     return 1
+
+
+COMMANDS = {"bless": cmd_bless, "ack": cmd_ack, "thresholds": cmd_thresholds, "silent": cmd_silent,
+            "snap": cmd_snap, "show": cmd_show, "check": cmd_check}
+
+
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
+    cmd = argv[1] if len(argv) > 1 else "check"
+    return COMMANDS.get(cmd, COMMANDS["check"])()
 
 
 def entry():
