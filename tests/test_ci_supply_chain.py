@@ -37,10 +37,10 @@ class Workflow(unittest.TestCase):
     def test_verify_tag_fetches_the_annotated_tag_first(self):
         # actions/checkout leaves a lightweight tag at the commit; verify-tag needs the tag object.
         text = WF.read_text()
-        job = text[text.index("verify-tag:"):]
-        fetch = job.find("git fetch --force origin \"refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}\"")
+        job = text[text.index("verify-tag:") :]
+        fetch = job.find('git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"')
         self.assertGreater(fetch, 0)
-        self.assertLess(fetch, job.index("verify-tag \"$GITHUB_REF_NAME\""))
+        self.assertLess(fetch, job.index('verify-tag "$GITHUB_REF_NAME"'))
 
     def test_tags_are_verified(self):
         self.assertIn("verify-tag", WF.read_text())
