@@ -33,6 +33,7 @@ RES_UNIT=${SENTINEL_RESIDENT_UNIT:-}
 RES_SCREEN=${SENTINEL_RESIDENT_SCREEN:-}
 STATE=${SENTINEL_STATE:-$ATLAS/runtime}
 LOG=$STATE/escalation.log
+DIGEST_HOUR=${SENTINEL_DIGEST_HOUR:-7}
 
 # The runtime directory holds throttle markers, the log and the notifier outbox: it must belong to this
 # user, must not be a symlink and must not be group- or other-writable. Prints the problem code, or nothing
@@ -232,6 +233,21 @@ if [ "$DRAIN_RC" -ne 0 ]; then
     heartbeat "outbox drain failed (rc=$DRAIN_RC): $(printf '%s' "$DRAIN_OUT" | tr '\n' ' ' | cut -c1-300)"
 elif [ -n "$DRAIN_OUT" ]; then
     heartbeat "$DRAIN_OUT"
+fi
+
+# --- 6. Daily agent-action digest (UTC); a queued notice counts as handed off ---
+digest_day=$(date -u +%F)
+digest_marker="$STATE/digest-$digest_day"
+if (( 10#$(date -u +%H) >= DIGEST_HOUR )) && [ ! -e "$digest_marker" ]; then
+    if SENTINEL_ATLAS="$ATLAS" SENTINEL_STATE_DIR="${SENTINEL_STATE_DIR:-$STATE}" SENTINEL_EMAIL="$HUMAN" \
+        SENTINEL_NOTIFY_CMD="$NOTIFY_CMD" timeout 60 python3 "$SDIR/digest.py" send; then
+        touch "$digest_marker"
+        for marker in "$STATE"/digest-*; do
+            [ "$marker" = "$digest_marker" ] || rm -f -- "$marker"
+        done
+    else
+        heartbeat "digest failed (retried next run)"
+    fi
 fi
 
 # --- Result ---
