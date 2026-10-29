@@ -19,7 +19,7 @@ service user. Give that account read access to the state directory and let it ac
 sudo usermod -aG atlas ops                 # read ALERT, events.jsonl, drift.log (state dir is 0750 atlas:atlas)
 # state changes (bless, ack) are made as the atlas user, for example:
 sudo -u atlas env SENTINEL_ATLAS=/var/lib/atlas python3 /opt/atlas/atlas/atlas.py bless
-sudo -u atlas touch /var/lib/atlas/ALERT.acked
+sudo -u atlas env SENTINEL_ATLAS=/var/lib/atlas python3 /opt/atlas/atlas/atlas.py ack
 ```
 
 Give the agent its instructions: point it at `/opt/atlas/AGENTS.md` (or paste the example block in section 8).
@@ -108,11 +108,13 @@ The full procedure is in `AGENTS.md` (and in the plugin's skill). In short:
    `ss`, `sha256sum`, `crontab -l`, `getent passwd`), not by reading raw logs. The default `status` view prints
    journal lines: use `systemctl status --lines=0 --no-pager <unit>` if you need it.
 3. Raw logs only through the `log-reader` subagent, on an exported slice.
-4. Decide: an explained change is blessed (`atlas.py bless`) and acknowledged (`touch <state>/ALERT.acked`); a real
+4. Decide: an explained change is blessed (`atlas.py bless`) and acknowledged (`atlas.py ack`); a real
    fault inside its mandate is fixed and verified; anything unexplained is reported as a possible intrusion and
    left unacknowledged, so escalation still reaches the human.
 5. Report: verdict, evidence, what it did, what it did not do. Deliver `REPORT-TO-SEND`, then delete it.
 
+`atlas.py ack` records the SHA-256 of the current ALERT content in `ALERT.acked` and tells the human who acknowledged it
+(the same trail as `bless`). Creating the file by hand is not recorded: escalation sends an "ack-unrecorded" notice for it.
 An acknowledgement is valid only for the current ALERT content; an unacknowledged alert is mailed to the human
 after 45 minutes. Bless refuses a snapshot that contains failed measurements: fix those first.
 

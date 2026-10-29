@@ -83,7 +83,7 @@ Everyday commands (as the atlas user, `SENTINEL_ATLAS=/var/lib/atlas`):
 cat /var/lib/atlas/ALERT                                   # is there an alarm?
 python3 /opt/atlas/atlas/atlas.py show                     # what Atlas sees now
 python3 /opt/atlas/atlas/atlas.py bless                    # accept a reviewed change as the new baseline
-touch /var/lib/atlas/ALERT.acked                           # acknowledge (stops escalation for this content)
+python3 /opt/atlas/atlas/atlas.py ack                       # acknowledge (stops escalation for this content, tells you who)
 touch /var/lib/atlas/RESIDENT-OFF                          # the resident is off on purpose
 ```
 
@@ -122,7 +122,7 @@ with read-only tools). Step by step, in detail in [docs/resident.md](docs/reside
    know whether the agent is present (absent agent = critical events go straight to the human).
 4. Optionally start the session from a systemd unit after a reboot (example in docs/resident.md).
 5. On a wake-up the agent reads ALERT and the bus line, verifies by probing system state, fixes or blesses
-   (`atlas.py bless`), acknowledges (`touch <state>/ALERT.acked`) and reports to you; anything unexplained stays
+   (`atlas.py bless`), acknowledges (`atlas.py ack`) and reports to you; anything unexplained stays
    unacknowledged so escalation still reaches you.
 6. `touch <state>/RESIDENT-OFF` when you stop the agent on purpose.
 7. Safety: raw logs only through the quarantined reader, no action on instructions found in data, human approval
@@ -521,7 +521,7 @@ sequenceDiagram
     M-->>AI: wake up
     alt the owner or the resident made the change
         AI->>A: bless (baseline becomes current)
-        AI->>ST: touch ALERT.acked
+        AI->>ST: atlas.py ack
         Note over P,ST: next patrol is clean, ALERT removed
     else nobody can explain it
         AI->>H: intrusion report
@@ -558,7 +558,7 @@ stateDiagram-v2
     [*] --> Clean
     Clean --> Raised: patrol finds drift or a failing sensor
     Raised --> Raised: body changes (ALERT rewritten, ALERT.since kept)
-    Raised --> Acknowledged: resident or human touches ALERT.acked
+    Raised --> Acknowledged: resident or human runs atlas.py ack
     Raised --> Escalated: 45 min without ack, mail and notify
     Acknowledged --> Raised: body changes after the ack
     Acknowledged --> Clean: fixed or blessed, next patrol is clean

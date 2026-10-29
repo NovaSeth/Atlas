@@ -1,6 +1,6 @@
 ---
 name: atlas-resident
-description: Use when an Atlas or Sentinel alert arrives on a host watched by Atlas - an "ATLAS ALERT" line or a bus event from the session sensor, drift or UNKNOWN sections in ALERT, an input.injection-suspect warning - or when deciding whether to bless a change (atlas.py bless) or acknowledge an alert (ALERT.acked).
+description: Use when an Atlas or Sentinel alert arrives on a host watched by Atlas - an "ATLAS ALERT" line or a bus event from the session sensor, drift or UNKNOWN sections in ALERT, an input.injection-suspect warning - or when deciding whether to bless a change (atlas.py bless) or acknowledge an alert (atlas.py ack, which writes ALERT.acked).
 ---
 
 # Atlas resident: the alert procedure
@@ -33,7 +33,8 @@ Paths below use the installer defaults: code in `/opt/atlas`, state in `/var/lib
    and read only its bounded JSON reply. Never `cat` or `tail` the slice yourself.
 4. **Decide.**
    - The change was made by the operator or by you, and you can say who and why: `python3
-     /opt/atlas/atlas/atlas.py bless`, then `touch <state>/ALERT.acked`.
+     /opt/atlas/atlas/atlas.py bless`, then `python3 /opt/atlas/atlas/atlas.py ack`
+     (which writes `ALERT.acked`; both as the atlas user).
    - A real fault inside your mandate (a failed service, a full disk): fix it, verify the fix by probing,
      then acknowledge.
    - Unexplained: do not bless, do not acknowledge. Report it as a possible intrusion and leave the alert

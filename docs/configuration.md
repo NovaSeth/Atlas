@@ -115,7 +115,8 @@ See `atlas/pauses/README.md`.
 ## Other switches in the state directory
 
 - `RESIDENT-OFF` - the resident is off on purpose: escalation does not report it dead, the router notifies the human.
-- `ALERT.acked` - acknowledges the current ALERT content (`touch`).
+- `ALERT.acked` - acknowledges the current ALERT content; written by `atlas.py ack` (the SHA-256 of the content, plus a notice
+  to the human), not by `touch`.
 - `REPORT-TO-SEND` - delete after delivering it.
 
 ## Languages (`i18n/`)
