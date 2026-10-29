@@ -16,6 +16,8 @@ import shlex
 import subprocess
 import sys
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -25,6 +27,28 @@ OUTBOX_MAX = 200
 OUTBOX_MAX_AGE_S = 7 * 86400
 NOTIFY_TIMEOUT = 60
 DROPPED_FILE = ".dropped"  # count of entries lost to the size/age bound, reported by the next drain
+
+
+class _NoHeartbeatRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def ping(url: str | None = None, timeout: float = 10.0) -> bool:
+    """One optional GET; never expose the URL or network diagnostics to the log."""
+    try:
+        if url is None:
+            url = os.environ.get("SENTINEL_HEARTBEAT_URL", "")
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return False
+        request = urllib.request.Request(url, headers={"User-Agent": "atlas-escalation"}, method="GET")
+        opener = urllib.request.build_opener(_NoHeartbeatRedirect())
+        with opener.open(request, timeout=timeout) as response:
+            return 200 <= response.status < 300
+    except Exception:
+        # Even malformed URLs and unexpected HTTP failures must stay quiet and non-fatal.
+        return False
 
 
 def outbox_dir():
@@ -193,8 +217,10 @@ def _drain(max_seconds):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv == ["ping"]:
+        return 0 if ping() else 1
     if argv[:1] != ["drain"]:
-        print("usage: notify.py drain", file=sys.stderr)
+        print("usage: notify.py drain|ping", file=sys.stderr)
         return 2
     r, error = _drain(60.0)
     if error:
