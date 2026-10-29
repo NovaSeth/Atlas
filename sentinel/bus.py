@@ -207,6 +207,38 @@ def _open(path):
         return None
 
 
+def _drain_rotated(rd, path, mine):
+    """Generator: the file under `path` was rotated away from reader `rd` (whose inode stat is `mine`).
+    Yield what was written to the old inode before the rename, then every newer rotated generation,
+    oldest first; closes the old file. A generation that fell off the end is not guessed at."""
+    for line in rd.lines():
+        ev = _parse(line)
+        if ev:
+            yield ev
+    newer = []
+    for i in range(1, KEEP + 1):
+        rp = Path("%s.%d" % (path, i))
+        try:
+            st = os.stat(rp)
+        except FileNotFoundError:
+            continue
+        if (st.st_ino, st.st_dev) == (mine.st_ino, mine.st_dev):
+            break
+        newer.append(rp)
+    else:
+        newer = []  # our generation fell off the end: do not guess, resume at the live file
+    rd.f.close()
+    for rp in reversed(newer):  # oldest of the newer generations first
+        g = _open(rp)
+        if g is None:
+            continue
+        with g:
+            for line in _Reader(g).lines():
+                ev = _parse(line)
+                if ev:
+                    yield ev
+
+
 def follow_events(from_end=False, stop=lambda: False, poll=FOLLOW_POLL, path=None, on_ready=None, on_idle=None):
     """Yield parsed events as they are appended, tail -F style across rotation.
 
@@ -241,33 +273,7 @@ def follow_events(from_end=False, stop=lambda: False, poll=FOLLOW_POLL, path=Non
             cur = None
         mine = os.fstat(rd.f.fileno())
         if cur is not None and (cur.st_ino, cur.st_dev) != (mine.st_ino, mine.st_dev):
-            # rotated: drain what was written to the old inode before the rename
-            for line in rd.lines():
-                ev = _parse(line)
-                if ev:
-                    yield ev
-            newer = []
-            for i in range(1, KEEP + 1):
-                rp = Path("%s.%d" % (path, i))
-                try:
-                    st = os.stat(rp)
-                except FileNotFoundError:
-                    continue
-                if (st.st_ino, st.st_dev) == (mine.st_ino, mine.st_dev):
-                    break
-                newer.append(rp)
-            else:
-                newer = []  # our generation fell off the end: do not guess, resume at the live file
-            rd.f.close()
-            for rp in reversed(newer):  # oldest of the newer generations first
-                g = _open(rp)
-                if g is None:
-                    continue
-                with g:
-                    for line in _Reader(g).lines():
-                        ev = _parse(line)
-                        if ev:
-                            yield ev
+            yield from _drain_rotated(rd, path, mine)
             rd = _Reader(_open(path) or open(os.devnull, "rb"))
             continue
         if cur is not None and cur.st_size < rd.f.tell():  # truncated in place
@@ -536,6 +542,33 @@ def cmd_follow(args):
     return 0
 
 
+def _replay_seen(seen_file):
+    """(display key -> time shown, failure): `failure` is the error class name when the list could not be read."""
+    done, failure = {}, ""
+    try:
+        for l in open(seen_file).read().splitlines():
+            t, _, key = l.partition(" ")
+            done[key] = float(t)
+    except (OSError, ValueError) as e:
+        failure = type(e).__name__
+    return done, failure
+
+
+def _replay_summary(limiter, suppressed, limit, state_failure):
+    """Print the replay's closing notices (budget problem, unsaved state, suppressed count); returns state_failure."""
+    problem = limiter.take_problem() if limiter else ""
+    if problem:
+        print("%s ALERT sentinel.wake-limit: %s; no events shown this hour (limit %d/h), see events.jsonl "
+              "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), problem, limit), flush=True)
+    if state_failure:
+        print("ATLAS SENSOR: replay state not saved (%s); events may repeat" % state_failure, flush=True)
+    if suppressed and limiter.claim_summary():
+        print("%s ALERT sentinel.wake-limit: %d more event(s) not shown (limit %d/h), see events.jsonl "
+              "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), suppressed, limit),
+              flush=True)
+    return state_failure
+
+
 def cmd_replay(args):
     """Print the bus lines appended since byte offset `offset` (inode `inode` of the file when the follower
     started; another inode or a shorter file = rotation: from the start) through the follower's filter:
@@ -548,14 +581,7 @@ def cmd_replay(args):
     if st.st_ino != args.inode or st.st_size < off:
         off = 0
     now = time.time()
-    done = {}
-    state_failure = ""   # why the seen list could not be read or saved; said once, exit code 1
-    try:
-        for l in open(args.seen_file).read().splitlines():
-            t, _, key = l.partition(" ")
-            done[key] = float(t)
-    except (OSError, ValueError) as e:
-        state_failure = type(e).__name__
+    done, state_failure = _replay_seen(args.seen_file)
     with open(path, "rb") as f:
         f.seek(off)
         data = f.read()
@@ -580,16 +606,7 @@ def cmd_replay(args):
             suppressed += 1
             continue
         print(format_line(ev, args.redact_untrusted), flush=True)
-    problem = limiter.take_problem() if limiter else ""
-    if problem:
-        print("%s ALERT sentinel.wake-limit: %s; no events shown this hour (limit %d/h), see events.jsonl "
-              "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), problem, limit), flush=True)
-    if state_failure:
-        print("ATLAS SENSOR: replay state not saved (%s); events may repeat" % state_failure, flush=True)
-    if suppressed and limiter.claim_summary():
-        print("%s ALERT sentinel.wake-limit: %d more event(s) not shown (limit %d/h), see events.jsonl "
-              "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), suppressed, limit),
-              flush=True)
+    state_failure = _replay_summary(limiter, suppressed, limit, state_failure)
     return 1 if state_failure else 0
 
 
