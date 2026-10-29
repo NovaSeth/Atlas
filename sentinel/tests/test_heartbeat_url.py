@@ -8,8 +8,9 @@ import subprocess
 import threading
 import unittest
 
-import notify  # noqa: E402
+# helpers puts sentinel/ on sys.path: it must be imported before the modules below
 from helpers import SENTINEL, tmpdir
+import notify  # noqa: E402
 
 ESC = SENTINEL / "escalation.sh"
 

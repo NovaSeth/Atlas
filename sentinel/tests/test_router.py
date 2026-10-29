@@ -2,8 +2,9 @@ import os
 import unittest
 from unittest import mock
 
-import router  # noqa: E402
+# helpers puts sentinel/ on sys.path: it must be imported before the modules below
 from helpers import make_event, notify_calls, stub_notify, tmpdir
+import router  # noqa: E402
 
 
 class RouterTests(unittest.TestCase):

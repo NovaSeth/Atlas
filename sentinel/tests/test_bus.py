@@ -6,8 +6,9 @@ import threading
 import time
 import unittest
 
-import bus  # noqa: E402
+# helpers puts sentinel/ on sys.path: it must be imported before the modules below
 from helpers import SENTINEL, make_event, read_bus, tmpdir, wait_for
+import bus  # noqa: E402
 
 BUS_PY = SENTINEL / "bus.py"
 

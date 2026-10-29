@@ -8,9 +8,10 @@ import time
 import unittest
 from unittest import mock
 
+# helpers puts sentinel/ on sys.path: it must be imported before the modules below
+from helpers import SENTINEL, tmpdir
 import bus  # noqa: E402
 import router  # noqa: E402
-from helpers import SENTINEL, tmpdir
 
 ROOT = SENTINEL.parent
 ESC = SENTINEL / "escalation.sh"

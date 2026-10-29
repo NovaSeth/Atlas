@@ -7,3 +7,7 @@ ignore = ["UP031"]  # printf formatting is the house style
 
 [format]
 quote-style = "double"
+
+[lint.per-file-ignores]
+# helpers.py puts sentinel/ on sys.path as an import side effect, so it must stay the first local import.
+"sentinel/tests/*.py" = ["I001"]

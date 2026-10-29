@@ -7,8 +7,9 @@ import time
 import unittest
 from unittest import mock
 
-import stream  # noqa: E402
+# helpers puts sentinel/ on sys.path: it must be imported before the modules below
 from helpers import SENTINEL, notify_calls, read_bus, stub_notify, tmpdir, wait_for
+import stream  # noqa: E402
 
 STREAM_PY = SENTINEL / "stream.py"
 

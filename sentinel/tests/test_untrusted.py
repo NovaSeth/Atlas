@@ -9,8 +9,9 @@ import stat
 import unittest
 from unittest import mock
 
-import untrusted  # noqa: E402
+# helpers puts sentinel/ on sys.path: it must be imported before the modules below
 from helpers import tmpdir
+import untrusted  # noqa: E402
 
 
 def printable_ascii(s):
