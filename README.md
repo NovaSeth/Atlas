@@ -62,12 +62,12 @@ New to Claude Code, or starting from a blank server? Use the step-by-step [docs/
 The short version for someone who already runs an agent follows.
 
 Install from a signed release tag, not from a branch tip. The repository carries the allowed signers in
-`.github/allowed_signers`; check the tag against them before you run anything as root:
+`.github/allowed_signers`; check the tag against them before you run anything as root (`git tag --list` shows the releases; v0.3.1 is the example here):
 
 ```bash
 git clone <this repository> atlas && cd atlas
-git -c gpg.ssh.allowedSignersFile=.github/allowed_signers verify-tag <tag>   # must say: Good "git" signature
-git checkout <tag>
+git -c gpg.ssh.allowedSignersFile=.github/allowed_signers verify-tag v0.3.1   # must say: Good "git" signature
+git checkout v0.3.1
 sudo ./install.sh --dry-run            # see every action first
 sudo ./install.sh --with-apache --install-cron
 sudoedit /var/lib/atlas/sentinel.env    # set SENTINEL_EMAIL (and whatever else you need)
@@ -159,7 +159,8 @@ is a deterministic hook (no model involved) that breaks the chain in Claude Code
 - While tainted, every tool call outside a small read-only allowlist is denied (writes, restarts, Edit/Write, MCP
   actions). Reading local files, simple read-only probes (`ls`, `df`, `ps`, `dpkg -l` ...) and the log-reader subagent stay possible.
 - Only a **verified human message** clears the taint: it must be a typed prompt found in the session transcript,
-  fresh and not used before. Task notifications, system envelopes and loop ticks do not clear it.
+  fresh and not used before. Its origin counts as human only in three shapes: no `origin` key, `"origin": "human"`, or `{"kind": "human"}`;
+  anything else (other strings, other objects, null, numbers, lists) is not human (details in [docs/compatibility.md](docs/compatibility.md)). Task notifications, system envelopes and loop ticks do not clear it.
 - Raw logs go through `agent/claude-code/bin/untrusted-export` (copies a slice into the quarantine directory and
   prints only its path) and the `log-reader` subagent (read-only tools, bounded JSON answer).
 
@@ -676,7 +677,9 @@ shell script and an installer dry run: [.github/workflows/tests.yml](.github/wor
 
 - Commit subjects follow Conventional Commits: `type(scope): summary` with `feat`, `fix`, `docs`, `style`, `test`, `refactor`,
   `perf`, `build`, `ci`, `chore` or `revert`. CI checks every non-merge commit
-  (`bash .github/check-commits.sh <base> HEAD` does the same locally).
+  (`bash .github/check-commits.sh <base> HEAD` does the same locally). After a force-push the old base commit is gone from
+  the clone: the check then falls back to the commits since the merge base with `origin/main` (or to the head commit
+  alone when `origin/main` is missing) and says so.
 - Write the test first and watch it fail for the stated reason. Product code is standard library only; `ruff`,
   `shellcheck` and `pytest-cov` are development tools.
 - Before you push: `python3 -m pytest -q`, `ruff check --config .github/ruff.toml .`, and

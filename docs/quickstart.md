@@ -28,7 +28,7 @@ You need:
   session, works with these subscriptions, not with an API key. On Team or Enterprise plans an Owner has to
   enable it.
 - **The Claude app** on your phone (iOS or Android), signed in to the same account.
-- **Access to the Atlas repository**: either it is public, or you were given access (see step 2).
+- **Access to the Atlas repository**: the repository is public on GitHub; a private fork or mirror needs access (see step 2).
 - **A mailbox** for alerts, for example `you@example.com`.
 
 Cost and data, in plain words. Atlas never contacts an AI provider. Claude Code does: while the resident session
@@ -82,7 +82,7 @@ git clone <atlas repository URL> atlas
 cd atlas
 ```
 
-**Private repository?** `git clone` asks for credentials and fails otherwise. Either sign in with the GitHub CLI
+**Private fork or mirror?** The Atlas repository itself is public and clones without credentials. A private copy needs them, and `git clone` fails otherwise. Either sign in with the GitHub CLI
 (`sudo apt-get install -y gh`, then `gh auth login` and `gh auth setup-git`), or add an SSH key of this server to
 your GitHub account and clone with the SSH address shown on the repository page. Or ask the maintainer for an archive, unpack it, and
 `cd` into it; then skip the verification below.
@@ -330,10 +330,10 @@ claude plugin list
 ```
 
 You should see the marketplace `atlas` listed, and `atlas-resident@atlas` in the plugin list as enabled. (Instead of
-the local path you can use `owner/repo` of the Atlas repository on GitHub; for a private repository Claude Code uses
+the local path you can use `owner/repo` of the Atlas repository on GitHub; for a private fork Claude Code uses
 the git credentials already on this server and never asks, so `gh auth login` from step 2 must have been done.)
 
-If something goes wrong: `marketplace not found` or a clone error for a private `owner/repo` means the server has no
+If something goes wrong: `marketplace not found` or a clone error for a private fork `owner/repo` means the server has no
 credentials for it; use the local path above. If the plugin does not show in `claude plugin list`, run
 `claude plugin marketplace list` and use the exact marketplace name it prints after the `@`.
 

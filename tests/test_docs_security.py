@@ -44,5 +44,55 @@ class Docs(unittest.TestCase):
             self.assertIn(word, text, word)
 
 
+class DocsSweepA27(unittest.TestCase):
+    """A27: the docs follow A21-A26 and carry no limit that those tasks fixed."""
+
+    @staticmethod
+    def _doc(*parts):
+        return ROOT.joinpath(*parts).read_text()
+
+    def _all(self):
+        docs = [self._doc("README.md"), self._doc("AGENTS.md")]
+        docs += [p.read_text() for p in sorted((ROOT / "docs").glob("*.md"))]
+        docs.append(self._doc("agent", "claude-code", "skills", "atlas-resident", "SKILL.md"))
+        return docs
+
+    def test_user_manager_filter_is_documented(self):
+        text = self._doc("docs", "configuration.md") + self._doc("docs", "architecture.md")
+        self.assertIn("user@<uid>.service", text)
+        self.assertIn("4294967294", text)
+
+    def test_force_push_fallback_is_documented(self):
+        contributing = self._doc("README.md").split("## Contributing", 1)[1]
+        self.assertIn("force-push", contributing)
+        self.assertIn("merge base", contributing)
+
+    def test_wake_summary_is_once_per_closed_window(self):
+        for name in ("architecture.md", "resident.md", "configuration.md"):
+            self.assertIn("after the window closes", self._doc("docs", name), name)
+        for text in self._all():
+            self.assertNotIn("when an hour closes with suppressed events", text)
+            self.assertNotIn("Over the limit the sensor prints one", text)
+
+    def test_origin_rule_is_consistent(self):
+        self.assertIn("explicit null", self._doc("docs", "compatibility.md"))
+        readme = self._doc("README.md")
+        self.assertIn("`origin`", readme.split("Only a **verified human message**", 1)[1][:700])
+
+    def test_origin_shapes_match_the_code(self):
+        readme = self._doc("README.md").split("Only a **verified human message**", 1)[1][:900]
+        compat = self._doc("docs", "compatibility.md")
+        for text in (readme, compat):
+            self.assertIn('"human"', text)
+            self.assertIn('{"kind": "human"}', text)
+            self.assertIn("no `origin` key", text)
+        for text in self._all():
+            self.assertNotIn("must be absent or an object whose", text)
+
+    def test_release_example_verifies_and_repo_is_public(self):
+        self.assertIn("verify-tag v0.3.1", self._doc("README.md"))
+        self.assertNotIn("**Private repository?**", self._doc("docs", "quickstart.md"))
+
+
 if __name__ == "__main__":
     unittest.main()
