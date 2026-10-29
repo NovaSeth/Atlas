@@ -1,6 +1,7 @@
 """The session sensor shows only fixed identifiers for events that carry attacker text (audit 3) and wakes the
 agent at most N times an hour (audit 9)."""
 
+import json
 import os
 import subprocess
 import sys
@@ -192,11 +193,14 @@ class ReplayBudget(unittest.TestCase):
             str(seen),
             "--redact-untrusted",
         ]
-        env = dict(os.environ, SENTINEL_WAKE_MAX_PER_HOUR="3")
+        env = dict(os.environ, SENTINEL_WAKE_MAX_PER_HOUR="3", SENTINEL_STATE_DIR=str(d / "state"))
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=20, env=env).stdout.splitlines()
-        self.assertEqual(len(out), 4, out)
-        self.assertIn("7", out[-1])
-        self.assertIn("events.jsonl", out[-1])
+        self.assertEqual(len(out), 3, out)  # the summary waits for the window to close (A21)
+        age_window(d / "state")
+        later = subprocess.run(cmd, capture_output=True, text=True, timeout=20, env=env).stdout.splitlines()
+        self.assertEqual(len(later), 1, later)
+        self.assertIn("7", later[-1])
+        self.assertIn("events.jsonl", later[-1])
         self.assertNotIn(PAYLOAD, "\n".join(out))
 
 
@@ -231,6 +235,14 @@ def run_follow(d, bus_name, events, state, *args, wait=2.0):
     p.kill()
     p.wait()
     return lines
+
+
+def age_window(state, seconds=3700):
+    """Move the stored wake window into the past, as if `seconds` had gone by."""
+    f = state / "wake-budget.json"
+    st = json.loads(f.read_text())
+    st["start"] -= seconds
+    f.write_text(json.dumps(st))
 
 
 def run_replay(d, path, seen, state, limit="3"):
@@ -271,6 +283,9 @@ class SharedBudget(unittest.TestCase):
             bus.emit(hostile("auth.sudo.command", i + 20), path=path)
         seen = d / "seen"
         seen.write_text("")
+        out = run_replay(d, path, seen, state).stdout.splitlines()
+        self.assertEqual(out, [], out)  # in-window: the summary waits for the window to close (A21)
+        age_window(state)
         out = run_replay(d, path, seen, state).stdout.splitlines()
         self.assertEqual(len(out), 1, out)
         self.assertIn("events.jsonl", out[0])
@@ -330,6 +345,15 @@ class BudgetStorage(unittest.TestCase):
             path = d / ("r%d.jsonl" % n)
             for i in range(2):
                 bus.emit(hostile("auth.sudo.command", n * 10 + i), path=path)
+            seen = d / ("seen%d" % n)
+            seen.write_text("")
+            out = run_replay(d, path, seen, state).stdout.splitlines()
+            summaries += sum("events.jsonl" in ln for ln in out)
+        self.assertEqual(summaries, 0)  # nothing before the window closes
+        age_window(state)
+        for n in range(4, 7):  # after it closed, exactly one replay says so
+            path = d / ("r%d.jsonl" % n)
+            path.write_text("")
             seen = d / ("seen%d" % n)
             seen.write_text("")
             out = run_replay(d, path, seen, state).stdout.splitlines()
