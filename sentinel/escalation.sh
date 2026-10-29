@@ -300,4 +300,11 @@ fi
 
 # Silence on the problems side = health. But we write the heartbeat ALWAYS.
 heartbeat "ok (patrol alive, ${NOTES:-resident alive}, stream alive, no unacknowledged alerts)"
+if [ -n "${SENTINEL_HEARTBEAT_URL:-}" ]; then
+    if timeout 20 python3 -I "$SDIR/notify.py" ping; then
+        heartbeat "external heartbeat: sent"
+    else
+        heartbeat "external heartbeat: FAILED"
+    fi
+fi
 exit 0
