@@ -18,7 +18,7 @@ because someone changed it. If neither the owner nor the resident did it, it is 
 
 Volatile numbers (disk, RAM, load, ban counts) live under "vitals" and are never diffed.
 """
-import hashlib, json, os, pwd, re, shutil, subprocess, sys
+import contextlib, hashlib, json, os, pwd, re, shutil, subprocess, sys
 from datetime import datetime, timezone
 
 # Code and instance state are separate: SENTINEL_ATLAS selects the state directory (baseline, current,
@@ -685,19 +685,36 @@ def alert_sha(raw):
     return hashlib.sha256(body if nl else b"").hexdigest()
 
 
+@contextlib.contextmanager
+def state_env():
+    """bus and notify locate events.jsonl and the outbox through SENTINEL_ATLAS; make that this state dir."""
+    had = "SENTINEL_ATLAS" in os.environ
+    prev = os.environ.get("SENTINEL_ATLAS")
+    os.environ["SENTINEL_ATLAS"] = BASE
+    try:
+        yield
+    finally:
+        if had:
+            os.environ["SENTINEL_ATLAS"] = prev
+        else:
+            os.environ.pop("SENTINEL_ATLAS", None)
+
+
 def audit_event(sensor, what, evidence):
     """Bus event for a human decision (bless/ack). A bus failure is a stderr line, never an exception."""
     sha = evidence.get("sha256", "")
     fp_sha = "".join(chr(ord("a") + int(c, 16)) for c in sha[:12])
     try:
-        bus.emit({"sensor": sensor, "severity": "warning", "confidence": "measured", "what": what,
-                  "fingerprint": "%s:%s" % (sensor, fp_sha), "evidence": evidence})
+        with state_env():
+            bus.emit({"sensor": sensor, "severity": "warning", "confidence": "measured", "what": what,
+                      "fingerprint": "%s:%s" % (sensor, fp_sha), "evidence": evidence})
     except Exception as e:  # noqa: BLE001 - the trail must not break the command
         print("atlas: bus event not written (%s): %s" % (sensor, e), file=sys.stderr)
 
 
 def tell_human(subject, body, kind):
-    status = notify.send_or_queue(subject, body, kind)
+    with state_env():
+        status = notify.send_or_queue(subject, body, kind)
     if status != "sent":
         print(t("atlas.notify_not_sent", status=status), file=sys.stderr)
     return status
