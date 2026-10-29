@@ -1,0 +1,2 @@
+# Edits to pre-existing tests that inventory.py accepts. One per line: <path>::<qualname>  # <P-decision id>
+# Tasks append their own lines (A4: P10, A6: P9); an entry is skipped by the guard, so every line needs a reason.
