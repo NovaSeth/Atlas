@@ -423,6 +423,9 @@ def cmd_replay(args):
         f.seek(off)
         data = f.read()
     data = data[: data.rfind(b"\n") + 1]
+    limit = wake_max_per_hour()
+    limiter = WakeLimiter(limit) if limit > 0 else None
+    suppressed = 0
     for l in data.decode("utf-8", "replace").splitlines():
         ev = _parse(l)
         if not ev or validate(ev) or ev["severity"] not in ("alert", "critical"):
@@ -436,7 +439,14 @@ def cmd_replay(args):
                 s.write("%d %s\n" % (now, key))
         except OSError:
             pass
+        if limiter and not limiter.admit(ev["sensor"]):
+            suppressed += 1
+            continue
         print(format_line(ev, args.redact_untrusted), flush=True)
+    if suppressed:
+        print("%s ALERT sentinel.wake-limit: %d more event(s) not shown (limit %d/h), see events.jsonl "
+              "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), suppressed, limit),
+              flush=True)
     return 0
 
 

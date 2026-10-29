@@ -7,3 +7,4 @@ sentinel/tests/test_stream.py::ClassifyTests.test_own_service_user_successful_su
 sentinel/tests/test_stream.py::UntrustedFieldTests.test_sudo_command_is_quoted_and_capped_at_120_in_what  # P10
 sentinel/tests/test_stream.py::UntrustedFieldTests.test_benign_journal_events_have_no_suspect  # P10
 atlas/tests/test_i2_wiring.py::TestSessionSensorGap.ev  # P9
+atlas/tests/test_state_dir.py::TestSentinelScriptsFindTheirOwnCode.test_session_sensor_follows_real_bus_from_its_own_dir  # D-KR-9
