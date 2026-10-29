@@ -68,6 +68,39 @@ class InstallUpgrade(unittest.TestCase):
         self.assertIn("systemctl try-restart sentinel-stream.service", out)
         self.assertLess(out.index("systemctl daemon-reload"), out.index("systemctl try-restart sentinel-stream.service"))
 
+    def _overlap(self, legacy, state=None, code="/opt/atlas"):
+        legacy.mkdir(parents=True, exist_ok=True)
+        (legacy / "escalation.log").write_text("x\n")
+        if state is not None:
+            self.state = state
+        r = self.dry(user=ME, code=code, env={"ATLAS_LEGACY_STATE": str(legacy)})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("rm -rf --one-file-system %s" % legacy, r.stdout)
+        self.assertNotIn("mv %s/" % legacy, r.stdout)
+        self.assertIn("overlaps", r.stderr)
+
+    def test_legacy_equal_to_state_is_never_removed(self):
+        self._overlap(self.tmp / "legacy", state=self.tmp / "legacy")
+
+    def test_state_inside_legacy_is_never_removed(self):
+        legacy = self.tmp / "legacy"
+        self._overlap(legacy, state=legacy / "st")
+
+    def test_legacy_inside_state_is_never_removed(self):
+        self._overlap(self.state / "old")
+
+    def test_legacy_overlapping_code_is_never_removed(self):
+        legacy = self.tmp / "legacy"
+        self._overlap(legacy, code=str(legacy / "code"))
+        self._overlap(self.tmp / "legacy2", code=str(self.tmp))
+
+    def test_legacy_reached_through_a_symlinked_state_is_never_removed(self):
+        legacy = self.tmp / "legacy"
+        legacy.mkdir()
+        link = self.tmp / "lnk"
+        link.symlink_to(legacy)
+        self._overlap(legacy, state=link)
+
 
 if __name__ == "__main__":
     unittest.main()
