@@ -6,7 +6,7 @@ Part of the optional Atlas taint gate (see the README, "Taint gate (optional)").
 One stdlib script for three hook events, dispatched by `hook_event_name`:
 - PreToolUse: when the MAIN agent reads an untrusted source (logs, journal, web, mail, other agents)
   the session becomes tainted and the call is recorded as pending; while tainted every tool call
-  outside a read-only allowlist is denied. Subagent calls (input carries `agent_id`) are not gated .
+  outside a read-only allowlist is denied. A subagent (input carries `agent_id`) is gated the same way once it has itself read untrusted data (`agent_taint`).
 - PostToolUse: when an untrusted call completes, the taint is marked again (a human message may have
   cleared it while the call ran). Never prints.
 - UserPromptSubmit: a human prompt clears the taint (pending calls stay); task notifications, system
@@ -1678,7 +1678,7 @@ class State:
         if self.path is None or self.unknown == "state-dir":
             return False
         d = {k: v for k, v in self.data.items()
-             if k not in ("source", "since", "count", "marked_at", "pending_human")} \
+             if k not in ("source", "since", "count", "marked_at", "pending_human", "format_unknown_at")} \
             if self.unknown is None else {}
         if evidence_id:
             used = [e for e in (d.get("used_evidence") or []) if isinstance(e, str)]
@@ -2082,6 +2082,18 @@ def _fresh(ts, after):
     return isinstance(ts, str) and bool(ISO_MS.match(ts)) and (not after or ts > after)
 
 
+FORMAT_PROBE_LINES = 200
+
+
+def _is_record(line):
+    """A transcript line the gate can recognise: a JSON object with a string `type`."""
+    try:
+        d = json.loads(line)
+    except ValueError:
+        return False
+    return isinstance(d, dict) and isinstance(d.get("type"), str)
+
+
 def _transcript_lookup(real, pid, sid, prompt, after=None, used=()):
     """(verdict, evidence id, timestamp) for this prompt from the harness's own transcript:
     - a user entry with the same promptId whose content is a person's prompt (turn-start prompts), or
@@ -2090,12 +2102,18 @@ def _transcript_lookup(real, pid, sid, prompt, after=None, used=()):
       may belong to an automated notification, so it is matched by text, not by promptId).
     Evidence older than `after` (the latest untrusted read) or already consumed is skipped, so an earlier
     identical human message cannot authenticate a later prompt. 'other' only when an entry for this exact
-    prompt says it is not human; unrelated entries are skipped."""
+    prompt says it is not human; unrelated entries are skipped. 'format-unknown' (P14) when no evidence was
+    found and the transcript is readable and non-empty but none of its last FORMAT_PROBE_LINES lines is a JSON
+    object with a string `type`: the Claude Code transcript format changed under us."""
     key = pid.encode("utf-8", "replace") if pid else None
+    seen, recognized = 0, False
     absorbed = {}  # deliveryId -> timestamp of its mid-turn absorption (newer lines are seen first)
     recent = _iso_ms_ago(ABSORB_WINDOW_S)
     try:
         for line in _lines_reversed(real):
+            if seen < FORMAT_PROBE_LINES:
+                seen += 1
+                recognized = recognized or _is_record(line)
             is_pid = key is not None and key in line
             is_queued = b'"queued_command"' in line
             is_qop = b'"queue-operation"' in line
@@ -2148,6 +2166,8 @@ def _transcript_lookup(real, pid, sid, prompt, after=None, used=()):
                 return "other", None, None
     except OSError:
         return None, None, None
+    if seen and not recognized:
+        return "format-unknown", None, None
     return None, None, None
 
 
@@ -2291,6 +2311,12 @@ def user_prompt_submit(data):
     used = frozenset(e for e in (state.data.get("used_evidence") or []) if isinstance(e, str)) \
         if state.unknown is None else frozenset()
     origin, eid, ts = transcript_origin(data, after, used) if isinstance(prompt, str) else (None, None, None)
+    if origin == "format-unknown":
+        log(sid, "UserPromptSubmit", "-", "keep", "transcript-format-unknown")
+        if state.path is not None and state.unknown is None:
+            with state:
+                state.update(format_unknown_at=now_iso())
+        origin = None  # no evidence either way: the deferred path below still applies
     if origin != "human":  # verified human provenance wins, even over notification-shaped text
         if origin is None and not aid and isinstance(prompt, str):
             real = _transcript_real(data.get("transcript_path"))
