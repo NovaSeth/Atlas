@@ -12,3 +12,11 @@ ExecStart=@ATLAS_CODE@/sentinel/escalation.sh
 TimeoutStartSec=120
 MemoryMax=128M
 Nice=10
+# Measured 2026-10-29: setuid MTAs need privilege elevation and a writable spool.
+# No NoNewPrivileges-implying option: those options break queued mail delivery.
+PrivateTmp=yes
+ProtectControlGroups=yes
+ProtectHome=read-only
+ProtectSystem=full
+ReadWritePaths=@ATLAS_STATE@
+UMask=0027
