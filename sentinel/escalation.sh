@@ -17,7 +17,7 @@
 #   SENTINEL_RESIDENT_UNIT  systemd unit of the AI resident (empty = no resident: check skipped)
 #   SENTINEL_RESIDENT_SCREEN  screen session name of the AI resident (empty = not checked)
 #   SENTINEL_LANG           language of the mail texts (en default, pl available)
-# Test overrides: SENTINEL_STATE (throttle markers + log), SENTINEL_STREAM_HEARTBEAT.
+# State: $SENTINEL_ATLAS/runtime (SENTINEL_STATE overrides, for tests), SENTINEL_STREAM_HEARTBEAT.
 set -uo pipefail
 
 # Testability is a feature, not a hack: a script whose alarm branch nobody ever ran is a hope,
@@ -31,9 +31,25 @@ HUMAN=${SENTINEL_EMAIL:-}
 NOTIFY_CMD=${SENTINEL_NOTIFY_CMD:-}
 RES_UNIT=${SENTINEL_RESIDENT_UNIT:-}
 RES_SCREEN=${SENTINEL_RESIDENT_SCREEN:-}
-STATE=${SENTINEL_STATE:-/var/tmp/sentinel}
+STATE=${SENTINEL_STATE:-$ATLAS/runtime}
 LOG=$STATE/escalation.log
-mkdir -p "$STATE"
+
+# The runtime directory holds throttle markers, the log and the notifier outbox: it must belong to this
+# user, must not be a symlink and must not be group- or other-writable. Prints the problem code, or nothing
+# (a missing directory is created 0750; its parent is not).
+state_dir_problem() {
+    local d=$1 mode
+    if [ -L "$d" ]; then echo symlink; return 0; fi
+    if [ ! -e "$d" ]; then
+        mkdir -m 0750 "$d" 2>/dev/null || echo cannot-create
+        return 0
+    fi
+    if [ ! -d "$d" ]; then echo not-a-directory; return 0; fi
+    if [ "$(stat -c %u "$d")" != "$(id -u)" ]; then echo foreign-owner; return 0; fi
+    mode=$(stat -c %a "$d")
+    if [ $(( 8#$mode & 8#022 )) -ne 0 ]; then echo group-or-other-writable; fi
+    return 0
+}
 
 # Thresholds. The patrol runs every 30 min - 45 min leaves one full cycle of slack.
 MAX_PATROL_AGE=45        # minutes
@@ -41,6 +57,27 @@ MAX_ALERT_AGE=45         # minutes without acknowledgement by the resident
 QUIET_BETWEEN_MAILS=6    # hours, per kind - so that a failure does not turn into spam
 
 now=$(date +%s)
+
+# An unsafe runtime directory: no marker or log may be written there. One mail per 6 h (marker in the
+# state dir of Atlas itself), a stderr line, exit 2 (UNKNOWN), never ok.
+UNSAFE_REASON=$(state_dir_problem "$STATE")
+if [ -n "$UNSAFE_REASON" ]; then
+    echo "sentinel-escalation: unsafe runtime directory $STATE ($UNSAFE_REASON)" >&2
+    unsafe_marker="$ATLAS/escalation-unsafe-state.sent"
+    if [ ! -f "$unsafe_marker" ] || [ $(( now - $(stat -c %Y "$unsafe_marker") )) -ge 21600 ]; then
+        u_subject=$(t esc.unsafe_state_subject)
+        u_body=$(t esc.unsafe_state dir="$STATE" reason="$UNSAFE_REASON" hours=6)
+        u_sent=0
+        if [ -n "$HUMAN" ] && printf '%s\n' "$u_body" | mail -s "$u_subject" "$HUMAN"; then u_sent=1; fi
+        if [ -n "$NOTIFY_CMD" ]; then
+            read -r -a u_cmd <<< "$NOTIFY_CMD"
+            SENTINEL_EMAIL="$HUMAN" timeout 45 "${u_cmd[@]}" "$u_subject" "$u_body" >/dev/null 2>&1 && u_sent=1
+        fi
+        [ "$u_sent" -eq 1 ] && touch "$unsafe_marker"
+    fi
+    exit 2
+fi
+
 heartbeat() { echo "$(date -Is) $*" >> "$LOG"; tail -n 500 "$LOG" > "$LOG.tmp" && mv "$LOG.tmp" "$LOG"; }
 
 # Notification sent at most once per QUIET_BETWEEN_MAILS hours for a given kind.
@@ -142,7 +179,7 @@ fi
 # restart or a busy 1 vCPU, short enough that a dead stream is not silent for a patrol cycle.
 # A missing file counts as silent (the daemon never started). The human's off switch is the file
 # pauses/sentinel-stream (it carries a reason): a deliberate stop is not a failure.
-STREAM_HB=${SENTINEL_STREAM_HEARTBEAT:-/var/tmp/sentinel/stream.heartbeat}
+STREAM_HB=${SENTINEL_STREAM_HEARTBEAT:-${SENTINEL_STATE_DIR:-$ATLAS/runtime}/stream.heartbeat}
 MAX_STREAM_AGE=5   # minutes
 if [ -f "$ATLAS/pauses/sentinel-stream" ]; then
     heartbeat "stream daemon paused deliberately (pauses/sentinel-stream) - not alarming"
@@ -154,6 +191,11 @@ else
         add_problem stream-silent "$(t esc.stream_silent age="$stream_age" limit="$MAX_STREAM_AGE")"
     fi
 fi
+
+# --- 5. Deliver notices the stream or the router could not send (outbox) ---
+# Escalation runs without NoNewPrivileges, so a setuid MTA works here. The line goes to the log BEFORE the
+# result line (the recipient test reads the last one).
+    SENTINEL_NOTIFY_CMD="$NOTIFY_CMD" timeout 70 python3 "$SDIR/notify.py" drain 2>/dev/null)
 
 # --- Result ---
 # A throttle marker lives only while ITS kind is a problem: a marker for a healthy kind is removed,
