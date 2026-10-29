@@ -2382,7 +2382,14 @@ def main():
                     State(raw_session(raw))._touch_flag()
             except BaseException:
                 pass
-        elif tool not in ALWAYS_READ_ONLY:
+        elif tool in ALWAYS_READ_ONLY:
+            # P13: the read goes on, but we cannot tell whether it read untrusted data: leave a taint flag
+            try:
+                if raw_session(raw) and State(raw_session(raw))._touch_flag():
+                    log(raw_session(raw), event or "unknown", tool, "taint", "error-read-flagged")
+            except BaseException:
+                pass
+        else:
             deny_internal(code)
     finally:
         try:
