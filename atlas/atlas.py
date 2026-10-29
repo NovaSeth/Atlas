@@ -196,12 +196,33 @@ def have(tool):
     return shutil.which(tool, path=TOOL_PATH) is not None
 
 
+# systemd starts the per-user service manager user@<uid>.service at a user's first login and stops it at the
+# last logout (lingering off), so it is per-login and transient: every SSH session would otherwise show as
+# drift (ADDED at login, REMOVED at logout). Only this exact shape is skipped. user-runtime-dir@<uid>.service
+# is a RemainAfterExit oneshot (state "exited"), which `--state=running` never lists, so it needs no entry.
+PER_LOGIN_UNIT_RE = re.compile(r"user@[0-9]{1,10}\.service")  # uid: 1-10 digits (32-bit)
+
+
+def is_per_login_unit(name):
+    return PER_LOGIN_UNIT_RE.fullmatch(name) is not None
+
+
+def without_per_login_units(snap):
+    """A copy of `snap` whose services.running lacks per-login units: an older baseline or current.json that
+    recorded user@<uid>.service then compares equal to a new snapshot instead of drifting REMOVED forever."""
+    svc = snap.get("services") if isinstance(snap, dict) else None
+    running = svc.get("running") if isinstance(svc, dict) else None
+    if not isinstance(running, list):
+        return snap
+    return {**snap, "services": {**svc, "running": [n for n in running if not is_per_login_unit(str(n))]}}
+
+
 def services(errors=None):
     out = (
         measure("services", "systemctl list-units --type=service --state=running --no-legend --plain", errors=errors)
         or ""
     )
-    names = sorted(ln.split()[0] for ln in out.splitlines() if ln.strip())
+    names = sorted(n for n in (ln.split()[0] for ln in out.splitlines() if ln.strip()) if not is_per_login_unit(n))
     enabled = measure("services", "systemctl list-unit-files --state=enabled --no-legend --plain", errors=errors) or ""
     en = sorted(ln.split()[0] for ln in enabled.splitlines() if ln.strip())
     return {"running": names, "enabled": en}
@@ -1005,7 +1026,11 @@ def cmd_bless():
         old = None if first else read_object(BASELINE)
     except (OSError, ValueError):
         old = None  # an unreadable old baseline is replaced; every section counts as changed below
-    sections = changed_sections(old, cur) if old is not None else sorted(k for k in cur if k not in IGNORE)
+    sections = (
+        changed_sections(without_per_login_units(old), cur)
+        if old is not None
+        else sorted(k for k in cur if k not in IGNORE)
+    )
     write(cur, BASELINE)
     print("baseline updated")
     sha256 = hashlib.sha256(open(BASELINE, "rb").read()).hexdigest()
@@ -1176,7 +1201,7 @@ def cmd_check():
     except (OSError, ValueError) as e:
         print(t("atlas.current_unreadable", error=e), file=sys.stderr)
         return 2
-    changes = shorten_packages(diff(baseline, snap))
+    changes = shorten_packages(diff(without_per_login_units(baseline), without_per_login_units(snap)))
     if not changes:
         print("ATLAS OK - no changes")
         return 0
