@@ -66,6 +66,18 @@ class Digest(unittest.TestCase):
         got = digest.collect(stamp, paths=[path, rotated, self.d / "missing"])
         self.assertEqual([e["sensor"] for e in got], ["atlas.ack", "auth.sudo.forged"])
 
+    def test_same_second_commands_survive_rotation_dedup(self):
+        first = ev("auth.sudo.command", 'sudo by "ops": "/usr/bin/id"', self.now - 10, digest=True)
+        second = dict(first, what='sudo by "ops": "/usr/bin/whoami"')
+        path, rotated = self.d / "commands", self.d / "commands.1"
+        path.write_text("\n".join(json.dumps(e) for e in (first, second)))
+        rotated.write_text(json.dumps(first))
+        events = digest.collect(self.now, paths=[path, rotated])
+        self.assertEqual([e["what"] for e in events], [first["what"], second["what"]])
+        _, body = digest.render(events, self.now)
+        self.assertIn("/usr/bin/id", body)
+        self.assertIn("/usr/bin/whoami", body)
+
     def test_only_literal_true_marks_an_event(self):
         path = self.d / "slice"
         path.write_text(json.dumps(ev("test.sensor", "not marked", self.now - 10, digest=1)))
@@ -115,6 +127,52 @@ class EscalationTrigger(unittest.TestCase):
             subprocess.run(["bash", str(SENTINEL / "escalation.sh")], env=env, capture_output=True, text=True, timeout=90)
         self.assertEqual(mails.read_text().count("daily digest"), 1)
         self.assertTrue(list((d / "st").glob("digest-*")))
+
+    def test_hour_parsing_and_result_survives_invalid_values(self):
+        cases = [("08", "08", True), ("09", "08", False), ("09", "09", True),
+                 ("23", "22", False), ("23", "23", True), ("24", "07", True),
+                 ("abc", "07", True), ("", "07", True), ("24", "06", False),
+                 ("0", "abc", True), ("08", "24", False), ("0", "", True),
+                 ('bad\n"value0123456789', "07", True)]
+        for configured, current, expected in cases:
+            with self.subTest(configured=configured, current=current):
+                d = tmpdir(self)
+                atlas, state, binp = d / "atlas", d / "runtime", d / "bin"
+                atlas.mkdir()
+                binp.mkdir()
+                (atlas / "heartbeat.log").touch()
+                hb = d / "hb"
+                hb.touch()
+                date = binp / "date"
+                date.write_text('#!/bin/sh\nif [ "$*" = "-u +%H" ]; then printf "%s\\n" "$TEST_UTC_HOUR"; '
+                                'else exec /bin/date "$@"; fi\n')
+                date.chmod(0o755)
+                notify = binp / "notify"
+                notify.write_text("#!/bin/sh\nexit 0\n")
+                notify.chmod(0o755)
+                env = dict(os.environ, SENTINEL_ATLAS=str(atlas), SENTINEL_STATE=str(state),
+                           SENTINEL_STATE_DIR=str(state), SENTINEL_STREAM_HEARTBEAT=str(hb),
+                           SENTINEL_NOTIFY_CMD=str(notify), SENTINEL_EMAIL="", SENTINEL_RESIDENT_UNIT="",
+                           SENTINEL_RESIDENT_SCREEN="", SENTINEL_LANG="en", SENTINEL_DIGEST_HOUR=configured,
+                           TEST_UTC_HOUR=current, PATH="%s:%s" % (binp, os.environ["PATH"]))
+                result = subprocess.run(["bash", str(SENTINEL / "escalation.sh")], env=env,
+                                        capture_output=True, text=True, timeout=90)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(bool(list(state.glob("digest-*"))), expected, result.stderr)
+                log = (state / "escalation.log").read_text()
+                self.assertIn("ok (patrol alive", log)  # Result section always executes.
+                invalid = configured in ("24", "abc", "", 'bad\n"value0123456789')
+                self.assertEqual(log.count("digest: invalid SENTINEL_DIGEST_HOUR="), int(invalid))
+                if invalid:
+                    diagnostic = next(line for line in log.splitlines() if "invalid SENTINEL_DIGEST_HOUR=" in line)
+                    self.assertTrue(diagnostic.endswith(", using 7"))
+                    if configured in ("24", "abc"):
+                        self.assertIn("SENTINEL_DIGEST_HOUR=%s, using 7" % configured, diagnostic)
+                    elif not configured:
+                        self.assertIn("SENTINEL_DIGEST_HOUR='', using 7", diagnostic)
+                    else:
+                        self.assertIn(r'SENTINEL_DIGEST_HOUR=bad\"value012345, using 7', diagnostic)
+                self.assertEqual(log.count("digest: invalid current UTC hour="), int(current in ("abc", "24", "")))
 
     def test_hour_empty_queue_and_retry(self):
         d = tmpdir(self)
