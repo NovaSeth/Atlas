@@ -149,3 +149,59 @@ def route(event, state_path=None, notify=None, presence=None, now=None):
         Path(tmp).write_text(json.dumps(state))
         os.replace(tmp, state_path)
         return True
+
+
+class WakeWatch:
+    """The daemon's view of the session sensor's wake budget: counts the events that would wake the
+    agent (severity >= alert, one fingerprint at most once per `dedup_s`) and, at the first suppression
+    of an hour, tells the human once and puts one `sentinel.wake-limit` warning on the bus (it never wakes:
+    below the alert floor). `max_per_hour` None = SENTINEL_WAKE_MAX_PER_HOUR (default 12), 0 = no limit."""
+
+    def __init__(self, max_per_hour=None, dedup_s=3600, clock=time.monotonic, notify_fn=None, emit_fn=None):
+        self.max = bus.wake_max_per_hour() if max_per_hour is None else max_per_hour
+        self.dedup_s, self.clock = dedup_s, clock
+        self.limiter = bus.WakeLimiter(self.max, clock=clock) if self.max > 0 else None
+        self.seen = {}
+        self.notify_fn = notify_fn or self._default_notify
+        self.emit_fn = emit_fn or self._default_emit
+
+    @staticmethod
+    def _default_notify(subject, body):
+        return _notify.send_or_queue(subject, body, "wake-limit") in ("sent", "queued")
+
+    @staticmethod
+    def _default_emit(ev):
+        bus.emit(ev)
+
+    def observe(self, ev):
+        """True = this event wakes the session."""
+        if ev.get("severity") not in ("alert", "critical"):
+            return False  # below the sensor's floor: never wakes
+        if not self.limiter:
+            return True  # limit off
+        now = self.clock()
+        fp = ev["fingerprint"]
+        if fp in self.seen and now - self.seen[fp] < self.dedup_s:
+            return False
+        self.seen[fp] = now
+        if len(self.seen) > 5000:
+            self.seen = {k: v for k, v in self.seen.items() if now - v < self.dedup_s}
+        self.limiter.roll()
+        if self.limiter.admit(ev["sensor"]):
+            return True
+        if self.limiter.suppressed == 1:
+            self._announce(self.limiter.first)
+        return False
+
+    def _announce(self, sensor):
+        try:
+            self.notify_fn(t("router.wake_limit_subject", limit=self.max),
+                           t("router.wake_limit_body", limit=self.max, sensor=sensor))
+        except Exception as e:
+            print("sentinel-router: wake-limit notice failed: %s" % e, file=sys.stderr, flush=True)
+        try:
+            self.emit_fn({"sensor": "sentinel.wake-limit", "severity": "warning", "confidence": "measured",
+                          "what": "wake limit %d/h reached" % self.max,
+                          "fingerprint": "sentinel.wake-limit:reached"})
+        except Exception as e:
+            print("sentinel-router: wake-limit event failed: %s" % e, file=sys.stderr, flush=True)
