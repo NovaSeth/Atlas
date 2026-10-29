@@ -79,6 +79,16 @@ class DocsSweepA27(unittest.TestCase):
         readme = self._doc("README.md")
         self.assertIn("`origin`", readme.split("Only a **verified human message**", 1)[1][:700])
 
+    def test_origin_shapes_match_the_code(self):
+        readme = self._doc("README.md").split("Only a **verified human message**", 1)[1][:900]
+        compat = self._doc("docs", "compatibility.md")
+        for text in (readme, compat):
+            self.assertIn('"human"', text)
+            self.assertIn('{"kind": "human"}', text)
+            self.assertIn("no `origin` key", text)
+        for text in self._all():
+            self.assertNotIn("must be absent or an object whose", text)
+
     def test_release_example_verifies_and_repo_is_public(self):
         self.assertIn("verify-tag v0.3.1", self._doc("README.md"))
         self.assertNotIn("**Private repository?**", self._doc("docs", "quickstart.md"))
