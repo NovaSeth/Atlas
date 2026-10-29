@@ -357,3 +357,56 @@ class BudgetStorage(unittest.TestCase):
             b = bus.SharedWakeBudget(3, state)
             self.assertFalse(b.admit("a.b"), text)
             self.assertIn("unreadable", b.take_problem(), text)
+
+
+class SummaryTiming(unittest.TestCase):
+    """A21: one summary per window that had suppressed events, only after the window closed, also for a fresh
+    follower; mocked clock, real (temporary) storage."""
+
+    def budget(self, d, t, limit=1):
+        return bus.SharedWakeBudget(limit, d / "state", clock=lambda: t[0])
+
+    def test_f4_no_summary_before_the_window_closes(self):
+        d, t = tmpdir(self), [100.0]
+        self.budget(d, t, 3).admit("a.b")
+        for _ in range(2):
+            self.budget(d, t, 3).admit("a.b")
+        for _ in range(4):  # four fresh instances suppress at the same instant
+            b = self.budget(d, t, 3)
+            self.assertFalse(b.admit("c.d"))
+            self.assertFalse(b.claim_summary())
+            self.assertIsNone(b.roll())
+        t[0] = 100.0 + 3600
+        summaries = [self.budget(d, t, 3).roll() for _ in range(4)]
+        self.assertEqual([s for s in summaries if s], [(4, "c.d")])
+
+    def test_f6_fresh_instance_prints_the_due_summary(self):
+        d, t = tmpdir(self), [100.0]
+        b0 = self.budget(d, t)
+        self.assertTrue(b0.admit("a.b"))
+        self.assertFalse(b0.admit("b.c"))
+        fresh = self.budget(d, t)  # e.g. a follower restarted after the suppression
+        self.assertIsNone(fresh.roll())
+        t[0] = 3701.0
+        self.assertEqual(fresh.roll(), (1, "b.c"))
+        self.assertIsNone(fresh.roll())
+        self.assertIsNone(self.budget(d, t).roll())  # never twice
+
+    def test_f6_admit_after_expiry_keeps_the_closed_summary(self):
+        d, t = tmpdir(self), [100.0]
+        b = self.budget(d, t)
+        b.admit("a.b")
+        b.admit("b.c")
+        t[0] = 3701.0
+        self.assertTrue(b.admit("c.d"))  # opens a new window
+        self.assertEqual(b.roll(), (1, "b.c"))
+        self.assertIsNone(b.roll())
+
+    def test_idle_fresh_instance_reads_the_state_at_most_once(self):
+        d, t = tmpdir(self), [100.0]
+        b = self.budget(d, t)
+        b.admit("a.b")
+        fresh = self.budget(d, t)
+        with mock.patch.object(bus.SharedWakeBudget, "_run", side_effect=AssertionError("locked run")):
+            for _ in range(5):
+                self.assertIsNone(fresh.roll())
