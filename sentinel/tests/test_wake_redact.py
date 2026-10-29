@@ -217,3 +217,52 @@ class ReplayStateFailure(unittest.TestCase):
         self.assertEqual(sum("replay state not saved" in l for l in r.stdout.splitlines()), 1, r.stdout)
         self.assertIn("events may repeat", r.stdout)
         self.assertEqual(sum("untrusted text not shown" in l for l in r.stdout.splitlines()), 2)
+
+
+class BudgetStorage(unittest.TestCase):
+    def test_idle_polls_never_touch_the_shared_state(self):
+        d = tmpdir(self)
+        b = bus.SharedWakeBudget(3, d / "state")
+        with mock.patch.object(bus.SharedWakeBudget, "_run", side_effect=AssertionError("state touched")):
+            for _ in range(5):
+                self.assertIsNone(b.roll())
+        self.assertTrue(b.admit("a.b"))
+        with mock.patch.object(bus.SharedWakeBudget, "_run", side_effect=AssertionError("state touched")):
+            for _ in range(5):
+                self.assertIsNone(b.roll())  # inside the cached window
+
+    def test_unchanged_state_is_not_rewritten(self):
+        d = tmpdir(self)
+        b = bus.SharedWakeBudget(3, d / "state")
+        b.admit("a.b")
+        with mock.patch("bus.os.replace", side_effect=AssertionError("rewritten")):
+            self.assertFalse(b.claim_summary())  # nothing suppressed: nothing changes
+
+    def test_one_summary_per_window_across_replays(self):
+        d = tmpdir(self)
+        state = d / "state"
+        run_follow(d, "a.jsonl", [hostile("web.sensitive-hit", i) for i in range(3)], state)
+        summaries = 0
+        for n in range(4):
+            path = d / ("r%d.jsonl" % n)
+            for i in range(2):
+                bus.emit(hostile("auth.sudo.command", n * 10 + i), path=path)
+            seen = d / ("seen%d" % n)
+            seen.write_text("")
+            out = run_replay(d, path, seen, state).stdout.splitlines()
+            summaries += sum("events.jsonl" in l for l in out)
+        self.assertEqual(summaries, 1)
+
+    def test_malformed_state_is_a_diagnostic_not_a_traceback(self):
+        bad = ['{"start": "bad", "count": 0}', '{"start": 1e999, "count": 0}', '{"start": 0, "count": -1}',
+               '{"start": 0, "count": 1.5}', '{"start": 0, "count": true}', '{"start": 0, "count": 999999}',
+               '{"start": 99999999999, "count": 0}', '{"start": 0, "count": 0, "summary_sent": "x"}',
+               '{"start": 0, "count": 0, "closed": [1]}', '[]']
+        for text in bad:
+            d = tmpdir(self)
+            state = d / "state"
+            state.mkdir(mode=0o750)
+            (state / "wake-budget.json").write_text(text)
+            b = bus.SharedWakeBudget(3, state)
+            self.assertFalse(b.admit("a.b"), text)
+            self.assertIn("unreadable", b.take_problem(), text)
