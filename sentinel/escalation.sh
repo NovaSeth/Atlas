@@ -33,6 +33,7 @@ RES_UNIT=${SENTINEL_RESIDENT_UNIT:-}
 RES_SCREEN=${SENTINEL_RESIDENT_SCREEN:-}
 STATE=${SENTINEL_STATE:-$ATLAS/runtime}
 LOG=$STATE/escalation.log
+DIGEST_HOUR=${SENTINEL_DIGEST_HOUR-7}
 
 # The runtime directory holds throttle markers, the log and the notifier outbox: it must belong to this
 # user, must not be a symlink and must not be group- or other-writable. Prints the problem code, or nothing
@@ -157,7 +158,9 @@ else
 fi
 
 # --- 3. An alarm stands and the resident has not acknowledged it ---
-# This is the heart of it: an alarm with no recipient. Acknowledge with `touch ALERT.acked`.
+# This is the heart of it: an alarm with no recipient. Acknowledge with `atlas.py ack`, which writes the
+# sha256 of the ALERT content into ALERT.acked and tells the human. A bare `touch ALERT.acked` still counts
+# as an acknowledgement (never lock the resident out), but is noticed once per ALERT content.
 if [ -f "$ATLAS/ALERT" ]; then
     # Age = time since the alert FIRST appeared in this continuous episode (ALERT.since, written
     # by the patrol when ALERT is created from nothing, removed with ALERT). The mtime of ALERT
@@ -172,6 +175,33 @@ if [ -f "$ATLAS/ALERT" ]; then
     if [ "$alert_age" -gt "$MAX_ALERT_AGE" ] && [ "$acked" -eq 0 ]; then
         add_problem alert-unacked "$(t esc.alert_unacked age="$alert_age" body="$(cat "$ATLAS/ALERT" 2>/dev/null)")"
     fi
+    if [ "$acked" -eq 1 ]; then
+        # Same bytes as atlas.py alert_sha: everything after the first line (the timestamp).
+        alert_sha=$(tail -n +2 "$ATLAS/ALERT" 2>/dev/null | sha256sum | cut -c1-64)
+        acked_sha=$(head -c 64 "$ATLAS/ALERT.acked" 2>/dev/null)
+        ack_marker="$STATE/notice-ack-${alert_sha:0:16}"
+        if [ "$acked_sha" != "$alert_sha" ] && [ ! -e "$ack_marker" ]; then
+            ack_sections=$(grep -E '^== .+ ==$' "$ATLAS/ALERT" 2>/dev/null | sed -e 's/^== //' -e 's/ ==$//' \
+                | head -n 20 | paste -sd, - | cut -c1-400)
+            ack_subject=$(t esc.ack_unrecorded_subject)
+            ack_body=$(t esc.ack_unrecorded sha256="$alert_sha" sections="${ack_sections:--}")
+            ack_sent=0
+            if [ -n "$HUMAN" ] && printf '%s\n' "$ack_body" | mail -s "$ack_subject" "$HUMAN"; then ack_sent=1; fi
+            if [ -n "$NOTIFY_CMD" ]; then
+                read -r -a ack_cmd <<< "$NOTIFY_CMD"
+                SENTINEL_EMAIL="$HUMAN" timeout 45 "${ack_cmd[@]}" "$ack_subject" "$ack_body" >/dev/null 2>&1 && ack_sent=1
+            fi
+            if [ "$ack_sent" -eq 1 ]; then
+                touch "$ack_marker"
+                heartbeat "notice: ack-unrecorded"
+            else
+                heartbeat "notice: ack-unrecorded not delivered (retried next run)"
+            fi
+        fi
+    fi
+else
+    # No ALERT: the per-content notice markers have served their episode.
+    rm -f "$STATE"/notice-ack-*
 fi
 
 # --- 4. Is the real-time stream daemon alive ---
@@ -203,6 +233,38 @@ if [ "$DRAIN_RC" -ne 0 ]; then
     heartbeat "outbox drain failed (rc=$DRAIN_RC): $(printf '%s' "$DRAIN_OUT" | tr '\n' ' ' | cut -c1-300)"
 elif [ -n "$DRAIN_OUT" ]; then
     heartbeat "$DRAIN_OUT"
+fi
+
+# --- 6. Daily agent-action digest (UTC); a queued notice counts as handed off ---
+# Validate before arithmetic: Bash otherwise interprets leading zeroes as octal,
+# and arbitrary values as arithmetic expressions (including variable references).
+digest_parse_hour() {
+    local value=$1 label=$2 cleaned
+    if [[ "$value" =~ ^0*([0-9]|1[0-9]|2[0-3])$ ]]; then
+        REPLY=$((10#${BASH_REMATCH[1]}))
+    else
+        cleaned=$(printf '%s' "${value:0:16}" | LC_ALL=C tr -cd '[:print:]')
+        printf -v cleaned '%q' "$cleaned"
+        heartbeat "digest: invalid $label=$cleaned, using 7"
+        REPLY=7
+    fi
+}
+digest_parse_hour "$DIGEST_HOUR" SENTINEL_DIGEST_HOUR
+DIGEST_HOUR=$REPLY
+digest_parse_hour "$(date -u +%H)" 'current UTC hour'
+digest_current_hour=$REPLY
+digest_day=$(date -u +%F)
+digest_marker="$STATE/digest-$digest_day"
+if (( digest_current_hour >= DIGEST_HOUR )) && [ ! -e "$digest_marker" ]; then
+    if SENTINEL_ATLAS="$ATLAS" SENTINEL_STATE_DIR="${SENTINEL_STATE_DIR:-$STATE}" SENTINEL_EMAIL="$HUMAN" \
+        SENTINEL_NOTIFY_CMD="$NOTIFY_CMD" timeout 60 python3 "$SDIR/digest.py" send; then
+        touch "$digest_marker"
+        for marker in "$STATE"/digest-*; do
+            [ "$marker" = "$digest_marker" ] || rm -f -- "$marker"
+        done
+    else
+        heartbeat "digest failed (retried next run)"
+    fi
 fi
 
 # --- Result ---

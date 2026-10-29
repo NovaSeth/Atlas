@@ -49,7 +49,7 @@ def send(subject, body, timeout=NOTIFY_TIMEOUT):
         r = subprocess.run(mail + ["-s", subject, to], input=body + "\n", capture_output=True, text=True,
                            timeout=timeout, env=env)
         return r.returncode == 0
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, subprocess.SubprocessError):  # ValueError: unparsable command (shlex)
         return False
 
 

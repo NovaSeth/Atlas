@@ -1,0 +1,16 @@
+# Narrow sudoers example for the resident agent account; not installed by install.sh.
+# Requires sudo >= 1.9.10 for POSIX extended regular expression arguments.
+# To adopt: replace all four placeholders, review the services and cleanup directory
+# for your host, validate with visudo -cf, then install as a root-owned 0440 drop-in.
+# Remove the resident account's broader sudo rules: sudo permissions are additive.
+# Keep the code root-owned and the state owned by the Atlas account.
+
+Cmnd_Alias RESIDENT_RESTART = /usr/bin/systemctl ^(restart|start|reset-failed) (apache2|nginx|cron)[.]service$
+# A comma separates commands in sudoers; do not add a comma-separated -p list here.
+Cmnd_Alias RESIDENT_PROBE = /usr/bin/ss -tulpn, /usr/bin/systemctl ^show [A-Za-z0-9@_.-]+$
+Cmnd_Alias RESIDENT_CLEAN = /usr/bin/find ^/var/cache/example-app -mindepth 1 -mtime [+][0-9]+ -delete$
+# sudoers requires the equals sign in command arguments to be escaped with one backslash.
+Cmnd_Alias RESIDENT_ATLAS = /usr/bin/env ^SENTINEL_ATLAS\=@ATLAS_STATE@ /usr/bin/python3 @ATLAS_CODE@/atlas/atlas[.]py (show|check|bless|ack)$
+
+@RESIDENT_USER@ ALL=(root) NOPASSWD: RESIDENT_RESTART, RESIDENT_PROBE, RESIDENT_CLEAN
+@RESIDENT_USER@ ALL=(@ATLAS_USER@) NOPASSWD: RESIDENT_ATLAS

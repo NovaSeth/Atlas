@@ -36,13 +36,13 @@ Cmnd_Alias ATLAS_HASH = \
 Cmnd_Alias ATLAS_LIST = \
     /usr/bin/test ^-d /(etc/systemd/system|etc/systemd/user|usr/local/lib/systemd/system|etc/cron[.]hourly|etc/cron[.]daily|etc/profile[.]d|etc/sudoers[.]d|etc/ssh/sshd_config[.]d|etc/apt/apt[.]conf[.]d)$, \
     /usr/bin/test ^-e /etc/(ld[.]so[.]preload|hosts|resolv[.]conf|nsswitch[.]conf|pam[.]d/sshd|ssh/sshd_config|profile|bash[.]bashrc|rc[.]local|environment|ssh/ssh_host_(ed25519|rsa)_key[.]pub)$, \
-    /usr/bin/test ^-s /[A-Za-z0-9@_+-][A-Za-z0-9@._+/-]*/[.]ssh/authorized_keys$, \
+    /usr/bin/test ^-s /[A-Za-z0-9@_+-][A-Za-z0-9@._+-]*(/[A-Za-z0-9@_+-][A-Za-z0-9@._+-]*)*/[.]ssh/authorized_keys$, \
     /usr/bin/ls ^-1 /etc/(cron[.]hourly|cron[.]daily|profile[.]d|sudoers[.]d|ssh/sshd_config[.]d|apt/apt[.]conf[.]d)$, \
     /usr/bin/find ^/(etc/systemd/system|etc/systemd/user|usr/local/lib/systemd/system) -maxdepth 2 -type f [(] -name [*][.]service -o -name [*][.]timer -o -name [*][.]socket -o -name [*][.]path [)]$
 
 # Key fingerprints (ssh-keygen -l prints fingerprints, never key material).
 Cmnd_Alias ATLAS_KEYS = \
-    /usr/bin/ssh-keygen ^-lf /[A-Za-z0-9@_+-][A-Za-z0-9@._+/-]*/[.]ssh/authorized_keys$, \
+    /usr/bin/ssh-keygen ^-lf /[A-Za-z0-9@_+-][A-Za-z0-9@._+-]*(/[A-Za-z0-9@_+-][A-Za-z0-9@._+-]*)*/[.]ssh/authorized_keys$, \
     /usr/bin/ssh-keygen ^-lf /etc/ssh/ssh_host_(ed25519|rsa)_key[.]pub$
 
 # Crontabs of every account (read: -l only) and the journal of single units.

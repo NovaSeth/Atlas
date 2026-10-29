@@ -20,6 +20,7 @@ SSH_JOURNAL_CMD, SSH_KNOWN_IPS, SSH_WINDOW_H.
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -77,7 +78,7 @@ def main():
         print(t("ssh.no_known_list", path=KNOWN, error=e), file=sys.stderr)
         return 2
     try:
-        p = subprocess.run(COMMAND, shell=True, capture_output=True, text=True, timeout=25)
+        p = subprocess.run(shlex.split(COMMAND), shell=False, capture_output=True, text=True, timeout=25)
     except Exception as e:
         print(t("ssh.journal_error", error=e), file=sys.stderr)
         return 2
