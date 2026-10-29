@@ -73,5 +73,24 @@
   "stream.web_leak": "Wrażliwa ścieżka {path} zwróciła {status} z niepustą treścią ({bytes} B) na {vhost} - możliwy wyciek.",
   "stream.source_unreadable": "Czujka strumieniowa '{source}' nie czyta źródła od ponad {seconds} s - cisza nie oznacza zdrowia.",
 
-  "router.subject": "[sentinel] krytyczne: {what}"
+  "router.subject": "[sentinel] krytyczne: {what}",
+
+  "atlas.no_baseline": "brak wzorca (baseline) — przejrzyj `atlas.py show` i uruchom `bless`",
+  "atlas.bless_subject": "[atlas] nowy wzorzec zaakceptował(a) {who}",
+  "atlas.bless_body": "{who} zaakceptował(a) bieżący stan jako nowy wzorzec o {when}.\nZmienione sekcje: {sections}\nsha256 wzorca: {sha256}\nJeśli się tego nie spodziewasz, porównaj z `atlas.py show` i poprzednim powiadomieniem o wzorcu.",
+  "atlas.bless_first": "pierwszy wzorzec",
+  "atlas.ack_subject": "[atlas] alarm potwierdził(a) {who}",
+  "atlas.ack_body": "{who} potwierdził(a) bieżący ALERT o {when}.\nSekcje: {sections}\nsha256 ALERT: {sha256}\nEskalacja tej treści ustaje; zmieniona treść wymaga nowego potwierdzenia.",
+  "atlas.ack_nothing": "nie ma czego potwierdzać: brak ALERT",
+  "atlas.ack_raced": "ALERT zmienił się w trakcie potwierdzania; przeczytaj go ponownie i potwierdź nową treść",
+  "atlas.notify_not_sent": "człowiek nie został teraz powiadomiony ({status}); eskalacja ponowi próbę z kolejki",
+  "esc.ack_unrecorded_subject": "[sentinel] ALERT potwierdzony bez atlas.py ack",
+  "esc.ack_unrecorded": "ALERT.acked zapisano bez `atlas.py ack` (gołe touch albo potwierdzenie starszej treści). Nie wiadomo, kto to zrobił.\nsha256 ALERT: {sha256}\nSekcje: {sections}\nEskalacja traktuje alarm jako potwierdzony.",
+  "esc.unsafe_state_subject": "[sentinel] NIEBEZPIECZNY katalog stanu",
+  "esc.unsafe_state": "Katalog stanu {dir} nie jest bezpieczny ({reason}): eskalacja nie może trzymać w nim znaczników i logu i kończy pracę po tym mailu. Popraw właściciela i uprawnienia (właściciel: użytkownik Atlasa, bez zapisu dla grupy i innych, nie dowiązanie) albo usuń go. Ten mail powtarza się co {hours} h.",
+  "router.wake_limit_subject": "[sentinel] za dużo pobudek agenta: osiągnięto limit {limit}/h",
+  "router.wake_limit_body": "Ponad {limit} zdarzeń alarmowych obudziłoby agenta w ciągu godziny (pierwsze pominięte: {sensor}). Agent dostanie jedną linię podsumowania po upływie godziny; zajrzyj do szyny (events.jsonl) sam.",
+  "digest.subject": "[sentinel] dzienne podsumowanie: {count} działań agenta",
+  "digest.header": "Sudo agenta, akceptacje wzorca, potwierdzenia i odrzucone fałszywe wpisy sudo od {since} do {until} (UTC):",
+  "digest.more": "(… i {count} więcej)"
 }

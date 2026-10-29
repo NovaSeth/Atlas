@@ -23,6 +23,7 @@ atlas/pauses/*
 !atlas/pauses/README.md
 atlas/events.jsonl*
 atlas/events.lock
+atlas/runtime/
 atlas/*.tmp
 atlas/.ALERT.*
 **/__pycache__/

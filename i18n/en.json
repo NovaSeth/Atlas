@@ -73,5 +73,24 @@
   "stream.web_leak": "Sensitive path {path} returned {status} with a non-empty body ({bytes} B) on {vhost} - possible leak.",
   "stream.source_unreadable": "Stream sensor '{source}' has not read its source for over {seconds} s - silence is not health.",
 
-  "router.subject": "[sentinel] critical: {what}"
+  "router.subject": "[sentinel] critical: {what}",
+
+  "atlas.no_baseline": "no baseline yet — review `atlas.py show` and run `bless`",
+  "atlas.bless_subject": "[atlas] new baseline accepted by {who}",
+  "atlas.bless_body": "{who} accepted the current snapshot as the new baseline at {when}.\nChanged sections: {sections}\nBaseline sha256: {sha256}\nIf you did not expect this, compare with `atlas.py show` and the previous baseline notice.",
+  "atlas.bless_first": "first baseline",
+  "atlas.ack_subject": "[atlas] alert acknowledged by {who}",
+  "atlas.ack_body": "{who} acknowledged the current ALERT at {when}.\nSections: {sections}\nALERT sha256: {sha256}\nEscalation for this content stops; changed content needs a new acknowledgement.",
+  "atlas.ack_nothing": "nothing to acknowledge: there is no ALERT",
+  "atlas.ack_raced": "ALERT changed while it was being acknowledged; read it again and acknowledge the new content",
+  "atlas.notify_not_sent": "the human was not notified now ({status}); the escalation timer retries from the outbox",
+  "esc.ack_unrecorded_subject": "[sentinel] ALERT acknowledged without atlas.py ack",
+  "esc.ack_unrecorded": "ALERT.acked was written without `atlas.py ack` (a bare touch, or an acknowledgement of older content). Who did it is not recorded.\nALERT sha256: {sha256}\nSections: {sections}\nEscalation treats the alert as acknowledged.",
+  "esc.unsafe_state_subject": "[sentinel] UNSAFE runtime directory",
+  "esc.unsafe_state": "The runtime directory {dir} is not safe ({reason}): escalation cannot keep its markers and log there and stops after this mail. Fix its owner and mode (owned by the Atlas user, not group- or other-writable, not a symlink) or remove it. This mail repeats every {hours} h.",
+  "router.wake_limit_subject": "[sentinel] too many agent wake-ups: limit {limit}/h reached",
+  "router.wake_limit_body": "More than {limit} alert events would have woken the agent within one hour (first suppressed: {sensor}). The agent gets one summary line when the hour ends; look at the bus (events.jsonl) yourself.",
+  "digest.subject": "[sentinel] daily digest: {count} agent action(s)",
+  "digest.header": "Agent sudo, baseline acceptances, acknowledgements and rejected forged sudo lines from {since} to {until} (UTC):",
+  "digest.more": "(… and {count} more)"
 }
