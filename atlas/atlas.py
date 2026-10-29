@@ -915,9 +915,18 @@ def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def read_object(path):
+    """The JSON object stored in `path`. OSError or ValueError when unreadable or not an object (null, list, ...)."""
+    with open(path) as f:
+        obj = json.load(f)
+    if not isinstance(obj, dict):
+        raise ValueError("%s: not a JSON object (%s)" % (path, type(obj).__name__))
+    return obj
+
+
 def cmd_bless():
     try:
-        cur = json.load(open(CURRENT))
+        cur = read_object(CURRENT)
     except (OSError, ValueError) as e:
         print(t("atlas.current_unreadable", error=e), file=sys.stderr)
         return 2
@@ -927,7 +936,7 @@ def cmd_bless():
         return 2
     first = not os.path.exists(BASELINE)
     try:
-        old = None if first else json.load(open(BASELINE))
+        old = None if first else read_object(BASELINE)
     except (OSError, ValueError):
         old = None   # an unreadable old baseline is replaced; every section counts as changed below
     sections = changed_sections(old, cur) if old is not None else sorted(k for k in cur if k not in IGNORE)
@@ -999,8 +1008,7 @@ def measure_errors_text(errors):
 def load_current():
     """(snapshot, None) from current.json, or (None, exit code 2) after printing why it is unreadable."""
     try:
-        with open(CURRENT) as f:
-            return json.load(f), None
+        return read_object(CURRENT), None
     except (OSError, ValueError) as e:
         print(t("atlas.current_unreadable", error=e), file=sys.stderr)  # human-facing (ALERT)
         return None, 2
@@ -1078,8 +1086,12 @@ def cmd_check():
         # never an implicit baseline: whatever state the host is in on the first run would become "normal"
         print(t("atlas.no_baseline"), file=sys.stderr)
         return 2
-    with open(BASELINE) as f:
-        changes = shorten_packages(diff(json.load(f), snap))
+    try:
+        baseline = read_object(BASELINE)
+    except (OSError, ValueError) as e:
+        print(t("atlas.current_unreadable", error=e), file=sys.stderr)
+        return 2
+    changes = shorten_packages(diff(baseline, snap))
     if not changes:
         print("ATLAS OK - no changes")
         return 0
