@@ -25,16 +25,23 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 for m in SUBMODULES:
     sys.modules.pop(m, None)
 
-import tg_core
-import tg_lexer
-import tg_classify
-import tg_state
-import tg_hooks
 import json
 import re
 import _signal as signal
 
-for _module in (tg_core, tg_lexer, tg_classify, tg_state, tg_hooks):
+_import_error = None
+tg_core = tg_lexer = tg_state = tg_classify = tg_hooks = None
+_loaded = []
+for _module_name in ("tg_core", "tg_lexer", "tg_state", "tg_classify", "tg_hooks"):
+    try:
+        _module = __import__(_module_name)
+        globals()[_module_name] = _module
+        _loaded.append(_module)
+    except BaseException:
+        _import_error = _module_name
+        break
+
+for _module in sorted(_loaded, key=lambda module: SUBMODULES.index(module.__name__)):
     for _name in vars(_module):
         if not _name.startswith("__") and _name not in ("_CONFIG", "_ARTIFACTS", "_ARTIFACTS_FULL",
                                                      "_LATENT", "_LATENT_FULL"):
@@ -70,10 +77,48 @@ def _deadline(signum, frame):
     raise tg_core.GateError("deadline")
 
 
+def _import_failure(raw, module):
+    """P3/P13 fallback independent of every split module, including state."""
+    event, tool, sid = raw_event(raw), raw_tool(raw), raw_session(raw)
+    if event == "PostToolUse" or (event == "PreToolUse" and tool in {"Read", "Grep", "Glob"}):
+        try:
+            if not sid:
+                raise ValueError("no-session")
+            directory = os.environ.get("TAINT_STATE_DIR") or os.path.expanduser("~/.claude/taint")
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+            fd = os.open(os.path.join(directory, sid + ".tainted"),
+                         os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            os.close(fd)
+        except BaseException:
+            # Reads retain onFailure semantics; a broken install still denies every write.
+            pass
+    elif event != "UserPromptSubmit":
+        sys.stdout.write(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse", "permissionDecision": "deny",
+            "permissionDecisionReason": "TAINT GATE: gate error: import-" + module}}))
+        sys.stdout.flush()
+
+
+def _check_imports():
+    if _import_error:
+        return _import_error
+    # Validate the last module on execution, keeping compatibility-only loads lazy.
+    # Its stdlib dependencies are already loaded by state/hooks; no heavy new imports.
+    try:
+        __import__("tg_provenance")
+    except BaseException:
+        return "tg_provenance"
+    return None
+
+
 
 def main():
     raw = b""
     event = tool = None
+    broken = _check_imports()
+    if broken:
+        _import_failure(sys.stdin.buffer.read(4 * 1024 * 1024), broken)
+        return
     try:
         signal.signal(signal.SIGALRM, _deadline)
         signal.setitimer(signal.ITIMER_REAL, tg_core.INTERNAL_DEADLINE_S)
