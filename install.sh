@@ -289,12 +289,18 @@ run systemctl try-restart sentinel-stream.service
 # --- 5b. AI resident (optional): files only, never enabled or started here -----------------------
 if [ -n "$RUSER" ]; then
     say "AI resident for $RUSER (trust level: $PMODE)"
+    for f in examples/resident/resident.env examples/systemd/atlas-resident.service; do
+        [ -s "$REPO/$f" ] || { echo "install.sh: the template $REPO/$f is missing or empty" >&2; exit 1; }
+    done
     render "$REPO/examples/systemd/atlas-resident.service" "$TMP/atlas-resident.service"
     sed -e "s|^RESIDENT_NAME=.*|RESIDENT_NAME=$RNAME|" \
         -e "s|^RESIDENT_PERMISSION_MODE=.*|RESIDENT_PERMISSION_MODE=$PMODE|" \
         -e "s|^RESIDENT_EXTRA_ARGS=.*|RESIDENT_EXTRA_ARGS=$RESIDENT_EXTRA|" \
         -e "s|^SENTINEL_ATLAS=.*|SENTINEL_ATLAS=$STATE|" -e "s|^ATLAS_CODE=.*|ATLAS_CODE=$CODE|" \
         "$REPO/examples/resident/resident.env" > "$TMP/resident.env"
+    if [ ! -s "$TMP/resident.env" ] || ! grep -q '^RESIDENT_PERMISSION_MODE=' "$TMP/resident.env"; then
+        echo "install.sh: the rendered resident.env is empty or has no RESIDENT_PERMISSION_MODE line" >&2; exit 1
+    fi
     if grep -hE '@[A-Z_]+@' "$TMP/atlas-resident.service" "$TMP/resident.env" >/dev/null; then
         echo "install.sh: a placeholder was left in the rendered resident files" >&2; exit 1
     fi

@@ -32,6 +32,7 @@ atlas/.ALERT.*
 *.bak-*
 **/*.env
 !examples/sentinel.env
+!examples/resident/resident.env
 **/*.token
 **/*.key
 **/*.pem

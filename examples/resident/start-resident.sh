@@ -56,6 +56,14 @@ if [ -e "$SENTINEL_ATLAS/RESIDENT-OFF" ]; then
     exit 0
 fi
 
+# Prerequisites: a missing program must not look like a down network or a missing session.
+for prog in screen curl; do
+    if ! command -v "$prog" >/dev/null 2>&1; then
+        log "required program not found: $prog (install it, e.g. apt-get install $prog)"
+        exit 4
+    fi
+done
+
 # b. Never two sessions.
 if screen -ls 2>/dev/null | grep -qE "[0-9]+\.${RESIDENT_SESSION}[[:space:]]"; then
     log "session '$RESIDENT_SESSION' already exists: not starting a second one"
