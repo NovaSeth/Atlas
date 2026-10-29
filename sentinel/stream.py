@@ -524,9 +524,11 @@ def emit_safe(ev):
 
 def router_loop(stop, ready):
     state = router.default_state_path()
+    watch = router.WakeWatch()
     for ev in bus.follow_events(from_end=True, stop=stop.is_set, on_ready=ready.set):
         try:
             if not bus.validate(ev):
+                watch.observe(ev)
                 router.route(ev, state_path=state)
         except Exception as e:
             print("sentinel-stream: router error: %s" % e, file=sys.stderr, flush=True)

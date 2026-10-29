@@ -191,7 +191,7 @@ while True:
 
 class TestSessionSensorGap(unittest.TestCase):
     def ev(self, fp):
-        return json.dumps({"ts": "2026-10-22T10:00:00Z", "sensor": "t.x", "severity": "alert",
+        return json.dumps({"ts": "2026-10-22T10:00:00Z", "sensor": "atlas.patrol", "severity": "alert",
                            "confidence": "measured", "what": "w-" + fp, "fingerprint": fp}) + "\n"
 
     def test_event_during_follower_gap_is_printed_exactly_once(self):

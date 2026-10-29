@@ -233,7 +233,7 @@ class TestSentinelScriptsFindTheirOwnCode(unittest.TestCase):
         self.addCleanup(p.kill)
         k = Collector(p)
         time.sleep(1.5)
-        ev = json.dumps({"sensor": "t.state", "severity": "alert", "confidence": "measured",
+        ev = json.dumps({"sensor": "atlas.patrol", "severity": "alert", "confidence": "measured",
                          "what": "synthetic", "message": "x", "evidence": {}, "command": "x",
                          "fingerprint": "t.state:1"})
         r = subprocess.run([sys.executable, str(ROOT / "sentinel" / "bus.py"), "emit", "--json", ev],
