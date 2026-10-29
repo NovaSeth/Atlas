@@ -1,16 +1,77 @@
 # Security model
 
 Atlas reads a lot and writes almost nothing. It runs as an unprivileged user (installer default `atlas`) with a
-sudoers drop-in that allows exactly the read-only commands below, as root, without a password - and nothing else.
+sudoers drop-in that allows the fixed command lines below, as root, without a password - and no others. The commands
+are read-only in effect, but not all of them are content-blind: `cat` of Apache vhost files and `journalctl` return
+text, while `sha256sum`, `ls`, `test` and `ssh-keygen -lf` return hashes, names or fingerprints only. Anyone who
+controls the Atlas account can run each allowed line with any argument its rule accepts (see *Threat model*).
 
 ## What Atlas writes
 
-- Only its **state directory** (`SENTINEL_ATLAS`) and `/var/tmp/sentinel` (escalation markers, stream heartbeat,
-  router state). It never writes into the code directory, `/etc`, or anything it watches.
-- It sends mail (`mail`) and runs `SENTINEL_NOTIFY_CMD` if you configure one. Nothing else leaves the host; there is
-  no telemetry and no network call except the HTTP probes to your own vhosts.
+- Its **state directory** (`SENTINEL_ATLAS`): `baseline.json`, `ALERT*`, `events.jsonl`, logs, and `runtime/`
+  (escalation markers, stream heartbeat, router and digest state; owner and mode are checked at use). Installs from before this layout kept
+  it in `/var/tmp/sentinel`; the installer moves it into `runtime/` on upgrade. `runtime/outbox/` holds notices
+  that could not be delivered at once, one file each, until the next escalation run delivers them
+  (`notify.py drain`). Atlas never writes into the code directory, `/etc`, or anything it watches.
+- It sends mail (`mail`) and runs `SENTINEL_NOTIFY_CMD` if you configure one.
+- **Opt-in heartbeat URL.** When `SENTINEL_HEARTBEAT_URL` is set (empty by default), every clean escalation run makes
+  one HTTP GET to that URL (10 s socket timeout, a redirect counts as failure, the URL is never logged). It carries
+  no payload, but the receiver learns the host's public IP address and that the escalation timer is alive.
+- Apart from that there is no telemetry and no network call except the HTTP probes to your own vhosts. What an AI
+  agent you attach sends to its provider is described in *Threat model*; Atlas itself never contacts a provider.
 - The **installer** is the exception: run as root, it creates the user, the state directory, the systemd units,
   the optional Apache snippet, the sudoers drop-in and (on request) the crontab lines. `uninstall.sh` removes them.
+
+## Threat model
+
+Atlas is a detector with a narrow privilege, so this section says whom it defends against, whom it cannot, and
+what leaves the host.
+
+**In scope**
+
+- *Internet clients.* Anyone who can send a request, an SSH user name or a login attempt controls text that reaches
+  the bus (request paths, user names). Defense: the text is cleaned and bounded, the stream requires journald's
+  trusted fields, and the session sensor shows attacker-controlled events by sensor name and digest only (see
+  *Untrusted input* in [architecture.md](architecture.md#untrusted-input)).
+- *Local unprivileged users.* They can write to the journal and run `sudo` with a command line of their choosing.
+  A `sudo` log line counts only when the journal entry's sender matches: `_EXE` must be a configured sudo path
+  (`SENTINEL_SUDO_EXE`, default `/usr/bin/sudo`) and `_UID` must map to the user named in the message. Only when the
+  entry has no `_EXE` does the check fall back to `_COMM` equal to `sudo`, which is weaker (a process can name
+  itself `sudo`). A mismatch becomes an `auth.sudo.forged` warning instead of a `sudo` event.
+- *A manipulated or compromised agent.* Text from logs can try to steer an attached AI agent. The alerting path
+  contains no model, so the human is told regardless. The agent reads raw logs only through a quarantined reader and
+  needs a human message before a privileged action once it has read untrusted text (see
+  [resident.md](resident.md)); its wake-ups are capped (`SENTINEL_WAKE_MAX_PER_HOUR`, default 12); its own `sudo`
+  use (`SENTINEL_AGENT_SUDO_USERS`) is summarised in a daily digest.
+- *Forged log lines.* Covered by the two points above: the trusted journald fields decide, never the message text.
+
+**Out of scope, with reasons**
+
+- *An intruder with root.* Root can stop the daemons, rewrite the baseline and the state directory and forge any
+  journal field. Atlas on the same host cannot detect what root hides.
+- *Takeover of the MTA or the notification channel.* Escalation is one mail or one `SENTINEL_NOTIFY_CMD`. Whoever
+  controls that channel controls whether the human hears anything. Use a channel you monitor independently.
+- *The machine itself dying.* A dead host reports nothing (host failure); see [When a layer dies](architecture.md#when-a-layer-dies) for what
+  is detected from inside and what needs a check from outside.
+- *An attacker with the Atlas account.* That account can edit `sentinel.env` (recipient, notify command), the
+  baseline and the pauses, and can run every allowed `sudo` line with any argument its rule accepts. Treat it as a
+  service account with a sensitive read role and never give an agent a shell as this account.
+- *Authenticity of stored events.* Entries on the bus and files in the state directory are not signed; integrity
+  rests on file permissions. HMAC is not implemented.
+
+**What an attached agent sends to its model provider**
+
+Atlas itself sends nothing to a provider. An AI agent attached to it does, as the content of its context: IP
+addresses (SSH logins, web clients), user names (SSH, sudo), host configuration read from `ALERT`, `events.jsonl`
+and `atlas.py show` (vhost names, listening ports, unit, cron and certificate names), and command lines (sudo
+commands, process names). The session sensor shows attacker-controlled bus text as a sensor name and digest, but an
+agent that reads `events.jsonl` or `ALERT` directly sees the cleaned text.
+
+IP addresses and login names are personal data under the GDPR. Before you attach an agent you need a legal basis
+(for example a documented legitimate interest in securing the system), a data processing agreement with the model
+provider, and an assessment of where the provider processes the data. Atlas does not replace addresses or names
+with tokens: pseudonymisation is not implemented. Without an agent nothing leaves the host except the notices you
+configured and the opt-in heartbeat GET.
 
 ## What Atlas reads, and why
 

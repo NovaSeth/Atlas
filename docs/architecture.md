@@ -11,6 +11,91 @@ flowchart LR
     RES --> HUMAN
 ```
 
+### System context and trust boundaries
+
+Who talks to whom, and where the trust changes. Everything from the internet and from local users is untrusted
+text; the model provider sits outside the host and sees what the agent reads (see
+[security.md](security.md#threat-model)).
+
+```mermaid
+C4Context
+    title Atlas - system context and trust boundaries
+    Person(human, "Operator", "Receives mail or a notice; acknowledges alerts")
+    Boundary(outside, "Outside the host (untrusted or external)") {
+        System_Ext(internet, "Internet clients", "Requests, SSH attempts: attacker-controlled text")
+        System_Ext(mta, "Mail and notification channel", "MTA, SENTINEL_NOTIFY_CMD target")
+        System_Ext(provider, "Model provider", "Receives what the agent reads")
+        System_Ext(hb, "Heartbeat URL (opt-in)", "SENTINEL_HEARTBEAT_URL, empty by default")
+    }
+    Boundary(host, "The monitored host") {
+        Boundary(unpriv, "Unprivileged zone") {
+            System(atlas, "Atlas", "Sensors, patrol, stream, bus, escalation; account atlas")
+            System_Ext(locals, "Local users", "Can write the journal and run sudo")
+            System(agent, "AI agent (optional)", "Reads alerts, may act with sudo after a human message")
+        }
+        Boundary(priv, "Privileged zone") {
+            System_Ext(root, "sudo and root", "Fixed read-only command lines for atlas; agent policy is opt-in")
+        }
+    }
+    Rel(internet, atlas, "Apache log lines, sshd journal")
+    Rel(locals, atlas, "journal entries, sudo command lines")
+    Rel(atlas, root, "reads through sudoers rules")
+    Rel(atlas, agent, "wakes via session sensor (capped)")
+    Rel(agent, root, "sudo, after a human message when tainted")
+    Rel(agent, provider, "context: IPs, user names, config")
+    Rel(atlas, mta, "escalation, outbox")
+    Rel(mta, human, "mail")
+    Rel(atlas, hb, "one GET per clean run")
+```
+
+### Containers and flows
+
+```mermaid
+C4Container
+    title Atlas - containers and the main flows
+    Person(human, "Operator", "Mail or notify command")
+    Boundary(outside, "Outside the host") {
+        System_Ext(internet, "Internet clients", "Untrusted request paths and user names")
+        System_Ext(mta, "MTA / notify channel", "Delivers to the operator")
+        System_Ext(hb, "Heartbeat URL", "Opt-in GET")
+    }
+    Boundary(host, "Host: Atlas account (unprivileged)") {
+        Container(apache, "Apache log", "file", "Sensitive-path log")
+        Container(stream, "stream.py", "systemd daemon", "Follows journal and Apache log; sanitizes; checks sudo sender")
+        Container(bus, "events.jsonl", "bus, flock", "One JSON event per line")
+        Container(router, "router", "in the daemon", "Critical events when the agent is absent; wake budget")
+        Container(outbox, "runtime/outbox", "files", "Notices waiting for delivery")
+        Container(patrol, "patrol.sh", "cron, 30 min", "Sensors and ALERT")
+        Container(alert, "ALERT", "file", "Current findings, ack, episode")
+        Container(esc, "escalation.sh", "systemd timer, 10 min", "Heartbeat checks, mail, drain outbox, digest")
+        Container(sensor, "session-sensor.sh", "monitor of the agent", "One redacted line per change")
+    }
+    Boundary(agentz, "AI agent session (optional)") {
+        Container(agent, "Agent", "LLM session", "Investigates, reports; taint gate guards it")
+    }
+    Boundary(privz, "Privileged") {
+        Container(sudo, "sudo / root", "sudoers rules", "Read-only commands; agent policy opt-in")
+    }
+    Rel(internet, apache, "requests")
+    Rel(apache, stream, "tail")
+    Rel(stream, bus, "emit")
+    Rel(bus, sensor, "follow, redacted, capped")
+    Rel(sensor, agent, "wakes")
+    Rel(agent, sudo, "privileged actions")
+    Rel(patrol, alert, "writes")
+    Rel(patrol, sudo, "measurements")
+    Rel(alert, esc, "age, ack")
+    Rel(bus, router, "critical events")
+    Rel(router, outbox, "when no channel accepts")
+    Rel(outbox, esc, "drain")
+    Rel(esc, mta, "mail")
+    Rel(mta, human, "notice")
+    Rel(esc, hb, "GET, if configured")
+```
+
+The flows to read: internet -> Apache log -> stream -> bus -> session sensor -> agent -> sudo/root; patrol -> ALERT;
+escalation -> human; router -> outbox -> escalation.
+
 | Layer | Form | May | May not |
 |---|---|---|---|
 | **sensor** | one bash/Python file, stdlib only | measure, print findings, write its own heartbeat | interpret, alarm, repair, call an LLM |
@@ -59,7 +144,7 @@ Every sensor obeys all of this; code that does not is a script that sometimes sa
   content first appeared). Writes are atomic (temp file + rename), so readers never see it half written.
 - `ALERT.since` marks the start of a continuous episode; escalation measures the alert's age from it, so an
   alert whose text changes every run still escalates.
-- `ALERT.acked` acknowledges: valid only while it is at least as new as `ALERT`. New content needs a new ack.
+- `ALERT.acked` acknowledges: valid only while it is at least as new as `ALERT`. New content needs a new ack. Create it with `python3 atlas/atlas.py ack` (records who and when); a bare `touch` still works but triggers one "ack-unrecorded" notice.
 - A clean run removes `ALERT` and ends the episode: an alarm must be able to go out on its own.
 
 ## The real-time layer (`sentinel/`)
@@ -132,6 +217,20 @@ What Atlas does (`sentinel/untrusted.py`, stdlib):
   An HTTP method outside the standard set is checked as well (and shown cut to 16 characters).
 - **Fingerprints of long paths.** The displayed path is cut at 80 characters; the web fingerprint adds a
   12-character SHA-256 digest of the full path (query removed), so two leaks with one prefix stay two events.
+- **Redaction allowlist.** The session sensor starts the follower with `--redact-untrusted`. Only events from
+  sensors whose text Atlas itself composes show their `what` (`atlas.patrol`, `systemd.unit-failed`,
+  `stream.source-unreadable`, `sentinel.wake-limit`; `TRUSTED_TEXT_SENSORS` in `sentinel/bus.py`). Every other
+  sensor, including a sensor name nobody has listed, appears as `<sensor>: untrusted text not shown, see the bus
+  [<sensor>#<digest>]`. A new sensor is therefore redacted until it is added to the list on purpose.
+- **Wake budget.** At most `SENTINEL_WAKE_MAX_PER_HOUR` (default 12, 0 = no limit) lines an hour reach the agent;
+  when an hour closes with suppressed events the sensor prints one summary line, and the router tells the human
+  once and puts a `sentinel.wake-limit` warning on the bus. An attacker who floods the logs can therefore neither
+  run up the agent's cost without bound nor hide behind the flood: the bus keeps every event.
+- **Sudo sender check.** A `sudo` line in the journal is trusted only when the entry's `_EXE` (or, when the journal
+  gives none, `_COMM` equal to `sudo`) and `_UID` match the sender it claims: `_EXE` must be one of
+  `SENTINEL_SUDO_EXE` (default `/usr/bin/sudo`) and `_UID` must map to the user named in the message. Otherwise the
+  stream emits `auth.sudo.forged` (a warning without the forged text, rate limited like the suspect warnings).
+  The agent's own sudo use (`SENTINEL_AGENT_SUDO_USERS`) is marked for the daily digest and never silenced.
 - **Optional classifier.** `ATLAS_INJECTION_CLASSIFIER_CMD` (off by default) names a local command that gets the
   raw text on stdin and exits 1 for "suspicious" (2 s timeout; any other outcome is ignored). Nothing leaves the
   host unless that command sends it.
@@ -152,8 +251,28 @@ text. The alerting path itself stays LLM-free, so a manipulated agent cannot sto
 | the patrol or cron | escalation: heartbeat older than 45 min | mail (and notify command) |
 | the stream daemon | systemd watchdog restarts it; escalation: heartbeat older than 5 min | restart, then mail |
 | the resident | router (critical events) and escalation (dead, or alert unacked) | notify / mail the human |
-| the escalation timer | nothing on this host | add an external check if you need one |
-| the whole machine | nothing on this host | out of scope: a host cannot report its own death |
+| the escalation timer | nothing on this host, unless you opt in: with `SENTINEL_HEARTBEAT_URL` set, every clean escalation run makes one GET to that URL (empty by default, nothing is sent) | configure a dead-man check at the receiver that alarms when the GET stops arriving |
+| the whole machine | nothing on this host | out of scope: a host cannot report its own death; an intruder who edits or deletes local files is not stopped either, so forward the logs below |
+
+### Forwarding the logs off the host
+
+`drift.log` and `events.jsonl` in the state directory are written by the Atlas account. An attacker with root or with
+that account can rewrite them, so keep a second copy somewhere they cannot reach. Atlas ships no forwarder;
+two generic ways, with placeholder names:
+
+```
+# /etc/rsyslog.d/30-atlas-forward.conf   (rsyslog imfile; replace the state path and the target)
+module(load="imfile")
+input(type="imfile" File="/var/lib/atlas/drift.log"    Tag="atlas-drift:"  Severity="notice" Facility="local6")
+input(type="imfile" File="/var/lib/atlas/events.jsonl" Tag="atlas-events:" Severity="notice" Facility="local6")
+local6.* action(type="omfwd" target="loghost.example.net" port="6514" protocol="tcp"
+                StreamDriver="gtls" StreamDriverMode="1" StreamDriverAuthMode="x509/name")
+```
+
+Or ship the journal instead: `systemd-journal-upload` on this host with `URL=https://loghost.example.net:19532` in
+`/etc/systemd/journal-upload.conf`, and `systemd-journal-remote` on the receiver. Either way the receiver is part of
+your trust base; the copy is only useful if nobody on the monitored host can delete it there. Note that the copy
+contains IP addresses and user names (see [security.md](security.md#threat-model)).
 
 ## Engineering rules (each one was learned from a real failure)
 
