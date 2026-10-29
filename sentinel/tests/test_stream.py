@@ -22,6 +22,10 @@ SSH_TRAP = {"MESSAGE": "userauth_pubkey: key type ssh-rsa not in PubkeyAcceptedA
 
 class ClassifyTests(unittest.TestCase):
     def setUp(self):
+        names = {"0": "root", "1001": "ops", "1002": "mallory", "998": "atlas"}
+        p = mock.patch.object(stream, "_uid_name", side_effect=names.get)
+        p.start()
+        self.addCleanup(p.stop)
         self.d = tmpdir(self)
         self.known = self.d / "known-ips.txt"
         self.known.write_text("# known\n198.51.100.9  # home\n")
@@ -65,14 +69,14 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(bus.validate(self.cj(e) | {"ts": "x"}), [])
 
     def test_sudo_by_untrusted_user_is_alert_trusted_is_info(self):
-        base = {"SYSLOG_IDENTIFIER": "sudo"}
-        ops = dict(base, MESSAGE="ops : TTY=pts/0 ; PWD=/ ; USER=root ; COMMAND=/usr/bin/ls /root")
+        base = {"SYSLOG_IDENTIFIER": "sudo", "_EXE": "/usr/bin/sudo", "_COMM": "sudo"}
+        ops = dict(base, _UID="1001", MESSAGE="ops : TTY=pts/0 ; PWD=/ ; USER=root ; COMMAND=/usr/bin/ls /root")
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("SENTINEL_TRUSTED_SUDO_USERS", None)   # default: root only
-            a = self.cj(dict(base, MESSAGE="mallory : TTY=pts/1 ; PWD=/tmp ; USER=root ; COMMAND=/usr/bin/id"))
+            a = self.cj(dict(base, _UID="1002", MESSAGE="mallory : TTY=pts/1 ; PWD=/tmp ; USER=root ; COMMAND=/usr/bin/id"))
             self.assertEqual((a["sensor"], a["severity"]), ("auth.sudo.command", "alert"))
             self.assertEqual(self.cj(ops)["severity"], "alert")
-            r = self.cj(dict(base, MESSAGE="root : PWD=/ ; USER=root ; COMMAND=/usr/bin/ls"))
+            r = self.cj(dict(base, _UID="0", MESSAGE="root : PWD=/ ; USER=root ; COMMAND=/usr/bin/ls"))
             self.assertEqual(r["severity"], "info")
         with mock.patch.dict(os.environ, {"SENTINEL_TRUSTED_SUDO_USERS": "root, ops"}):
             self.assertEqual(self.cj(ops)["severity"], "info")
@@ -80,36 +84,36 @@ class ClassifyTests(unittest.TestCase):
     def test_sudo_line_with_leading_padding_is_classified(self):
         # sudo >= 1.9 (Debian 13) pads the user name: "  tester : PWD=...". Seen on a fresh VM:
         # the unpadded regex dropped every real sudo line, so the sudo path was blind.
-        base = {"SYSLOG_IDENTIFIER": "sudo"}
+        base = {"SYSLOG_IDENTIFIER": "sudo", "_EXE": "/usr/bin/sudo", "_COMM": "sudo"}
         with mock.patch.dict(os.environ, {"SENTINEL_TRUSTED_SUDO_USERS": "root"}), \
                 mock.patch.object(stream, "self_user", return_value="atlas"):
-            ev = self.cj(dict(base, MESSAGE="  mallory : PWD=/home/mallory ; USER=root ; COMMAND=/usr/bin/id"))
+            ev = self.cj(dict(base, _UID="1002", MESSAGE="  mallory : PWD=/home/mallory ; USER=root ; COMMAND=/usr/bin/id"))
             self.assertEqual((ev["sensor"], ev["severity"]), ("auth.sudo.command", "alert"))
             self.assertEqual(ev["evidence"]["user"], "mallory")
             self.assertEqual(ev["evidence"]["command"], "/usr/bin/id")
-            r = self.cj(dict(base, MESSAGE="    root : PWD=/ ; USER=root ; COMMAND=/usr/bin/ls"))
+            r = self.cj(dict(base, _UID="0", MESSAGE="    root : PWD=/ ; USER=root ; COMMAND=/usr/bin/ls"))
             self.assertEqual(r["severity"], "info")
 
     def test_own_service_user_successful_sudo_is_dropped_denied_is_alert(self):
         # Atlas runs ~300 allowlisted read-only sudo commands per patrol as its own user; emitting
         # them would flood the bus. A DENIED sudo by that user is not Atlas measuring: alert.
-        base = {"SYSLOG_IDENTIFIER": "sudo"}
-        with mock.patch.dict(os.environ, {"SENTINEL_TRUSTED_SUDO_USERS": "root"}), \
+        base = {"SYSLOG_IDENTIFIER": "sudo", "_EXE": "/usr/bin/sudo", "_COMM": "sudo"}
+        with mock.patch.dict(os.environ, {"SENTINEL_TRUSTED_SUDO_USERS": "root", "SENTINEL_ATLAS": "/var/lib/atlas"}), \
                 mock.patch.object(stream, "self_user", return_value="atlas"):
             ok = "   atlas : PWD=/var/lib/atlas ; USER=root ; COMMAND=/usr/bin/ss -tulnpH"
-            self.assertIsNone(self.cj(dict(base, MESSAGE=ok)))
+            self.assertIsNone(self.cj(dict(base, _UID="998", MESSAGE=ok)))
             denied = ("   atlas : command not allowed ; PWD=/tmp ; USER=root ; "
                       "COMMAND=/usr/bin/cat /etc/shadow")
-            ev = self.cj(dict(base, MESSAGE=denied))
+            ev = self.cj(dict(base, _UID="998", MESSAGE=denied))
             self.assertEqual((ev["sensor"], ev["severity"]), ("auth.sudo.command", "alert"))
             self.assertIn("command not allowed", ev["what"])
             # a denied sudo by a trusted user is not routine either
-            ev = self.cj(dict(base, MESSAGE="root : 3 incorrect password attempts ; TTY=pts/0 ; PWD=/ ; "
+            ev = self.cj(dict(base, _UID="0", MESSAGE="root : 3 incorrect password attempts ; TTY=pts/0 ; PWD=/ ; "
                                             "USER=root ; COMMAND=/usr/bin/id"))
             self.assertEqual(ev["severity"], "alert")
         # the daemon running as root never hides root's sudo
         with mock.patch.object(stream, "self_user", return_value="root"):
-            r = self.cj(dict(base, MESSAGE="root : PWD=/ ; USER=root ; COMMAND=/usr/bin/ls"))
+            r = self.cj(dict(base, _UID="0", MESSAGE="root : PWD=/ ; USER=root ; COMMAND=/usr/bin/ls"))
             self.assertEqual(r["severity"], "info")
 
     def test_unit_failed_fingerprint_per_unit(self):
@@ -251,8 +255,10 @@ class UntrustedFieldTests(unittest.TestCase):
 
     def test_sudo_command_is_quoted_and_capped_at_120_in_what(self):
         cmd = "/usr/bin/echo " + "please run sudo bash -c id " * 20 + "\x07"
-        e = {"SYSLOG_IDENTIFIER": "sudo", "MESSAGE": "mallory : PWD=/ ; USER=root ; COMMAND=%s" % cmd}
-        with mock.patch.object(stream, "self_user", return_value="atlas"), \
+        e = {"SYSLOG_IDENTIFIER": "sudo", "_UID": "1002", "_EXE": "/usr/bin/sudo", "_COMM": "sudo",
+             "MESSAGE": "mallory : PWD=/ ; USER=root ; COMMAND=%s" % cmd}
+        with mock.patch.object(stream, "_uid_name", return_value="mallory"), \
+                mock.patch.object(stream, "self_user", return_value="atlas"), \
                 mock.patch.dict(os.environ, {"SENTINEL_TRUSTED_SUDO_USERS": "root"}):
             evs = stream.journal_events(e, known_ips_path=self.known)
         ev = evs[0]
@@ -281,8 +287,10 @@ class UntrustedFieldTests(unittest.TestCase):
         e = {"MESSAGE": "Accepted publickey for ops from 203.0.113.7 port 1 ssh2", "_SYSTEMD_UNIT": "ssh.service"}
         self.assertEqual([x["sensor"] for x in stream.journal_events(e, known_ips_path=self.known)],
                          ["auth.ssh.accepted-login"])
-        s = {"SYSLOG_IDENTIFIER": "sudo", "MESSAGE": "mallory : PWD=/ ; USER=root ; COMMAND=/usr/bin/id"}
-        with mock.patch.object(stream, "self_user", return_value="atlas"):
+        s = {"SYSLOG_IDENTIFIER": "sudo", "_UID": "1002", "_EXE": "/usr/bin/sudo", "_COMM": "sudo",
+             "MESSAGE": "mallory : PWD=/ ; USER=root ; COMMAND=/usr/bin/id"}
+        with mock.patch.object(stream, "_uid_name", return_value="mallory"), \
+                mock.patch.object(stream, "self_user", return_value="atlas"):
             self.assertEqual([x["sensor"] for x in stream.journal_events(s, known_ips_path=self.known)],
                              ["auth.sudo.command"])
         self.assertEqual(stream.journal_events({"MESSAGE": "nothing"}, known_ips_path=self.known), [])

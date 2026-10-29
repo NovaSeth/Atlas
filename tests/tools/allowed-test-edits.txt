@@ -1,2 +1,8 @@
 # Edits to pre-existing tests that inventory.py accepts. One per line: <path>::<qualname>  # <P-decision id>
 # Tasks append their own lines (A4: P10, A6: P9); an entry is skipped by the guard, so every line needs a reason.
+sentinel/tests/test_stream.py::ClassifyTests.setUp  # P10
+sentinel/tests/test_stream.py::ClassifyTests.test_sudo_by_untrusted_user_is_alert_trusted_is_info  # P10
+sentinel/tests/test_stream.py::ClassifyTests.test_sudo_line_with_leading_padding_is_classified  # P10
+sentinel/tests/test_stream.py::ClassifyTests.test_own_service_user_successful_sudo_is_dropped_denied_is_alert  # P10
+sentinel/tests/test_stream.py::UntrustedFieldTests.test_sudo_command_is_quoted_and_capped_at_120_in_what  # P10
+sentinel/tests/test_stream.py::UntrustedFieldTests.test_benign_journal_events_have_no_suspect  # P10
