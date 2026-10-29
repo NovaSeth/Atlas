@@ -4,8 +4,9 @@ import json
 import os
 import sys
 import time
-import tg_core
+
 import tg_classify
+import tg_core
 import tg_state
 
 
@@ -76,11 +77,8 @@ def pre_tool_use(data):
         return
     if not launch_allowed(tool, ti):
         tg_state.log(sid, "PreToolUse", tool, "deny", "subagent-not-allowed")
-        deny(
-            tg_core.SUBAGENT_LAUNCH_DENY_TEXT.format(
-                allowed=", ".join(tg_state.safe_token(x, 64) for x in tg_state.config()["subagent_allowlist"])
-            )
-        )
+        names = ", ".join(tg_state.safe_token(x, 64) for x in tg_state.config()["subagent_allowlist"])
+        deny(tg_core.SUBAGENT_LAUNCH_DENY_TEXT.format(allowed=names))
         return
     if is_subagent(data):
         subagent_pre_tool_use(data, tool, ti, cwd)
@@ -375,14 +373,11 @@ def user_prompt_submit(data):
         _consume_clean_prompt(state, data, prompt, aid)
         return
     after = state.data.get("marked_at") if state.unknown is None else None
-    used = (
-        frozenset(e for e in (state.data.get("used_evidence") or []) if isinstance(e, str))
-        if state.unknown is None
-        else frozenset()
-    )
-    origin, eid, ts = (
-        tg_provenance.transcript_origin(data, after, used) if isinstance(prompt, str) else (None, None, None)
-    )
+    used = frozenset()
+    if state.unknown is None:
+        used = frozenset(e for e in (state.data.get("used_evidence") or []) if isinstance(e, str))
+    is_text = isinstance(prompt, str)
+    origin, eid, ts = tg_provenance.transcript_origin(data, after, used) if is_text else (None, None, None)
     if origin == "format-unknown":
         tg_state.log(sid, "UserPromptSubmit", "-", "keep", "transcript-format-unknown")
         if state.path is not None and state.unknown is None:
@@ -392,9 +387,8 @@ def user_prompt_submit(data):
     if origin != "human":  # verified human provenance wins, even over notification-shaped text
         if _defer_prompt(state, data, sid, prompt, aid, origin):
             return
-        tg_state.log(
-            sid, "UserPromptSubmit", "-", "keep", "not-human" if origin == "other" or aid else "unverified-origin"
-        )
+        why = "not-human" if origin == "other" or aid else "unverified-origin"
+        tg_state.log(sid, "UserPromptSubmit", "-", "keep", why)
         return
     if state.path is None:
         tg_state.log(sid, "UserPromptSubmit", "-", "keep", "unknown-" + (state.unknown or "x"))

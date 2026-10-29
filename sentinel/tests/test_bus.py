@@ -6,9 +6,8 @@ import threading
 import time
 import unittest
 
-from helpers import SENTINEL, make_event, read_bus, tmpdir, wait_for
-
 import bus  # noqa: E402
+from helpers import SENTINEL, make_event, read_bus, tmpdir, wait_for
 
 BUS_PY = SENTINEL / "bus.py"
 

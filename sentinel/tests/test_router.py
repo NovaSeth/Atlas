@@ -2,9 +2,8 @@ import os
 import unittest
 from unittest import mock
 
-from helpers import make_event, notify_calls, stub_notify, tmpdir
-
 import router  # noqa: E402
+from helpers import make_event, notify_calls, stub_notify, tmpdir
 
 
 class RouterTests(unittest.TestCase):

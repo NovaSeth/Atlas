@@ -132,7 +132,7 @@ class SharedContract(unittest.TestCase):
 
     def test_new_env_keys_are_documented_in_the_template(self):
         text = (ROOT / "examples" / "sentinel.env").read_text(encoding="utf-8")
-        keys = {l.split("=", 1)[0] for l in text.splitlines() if l and not l.startswith("#") and "=" in l}
+        keys = {ln.split("=", 1)[0] for ln in text.splitlines() if ln and not ln.startswith("#") and "=" in ln}
         for k in NEW_ENV:
             self.assertIn(k, keys, k)
         self.assertRegex(text, r"(?m)^SENTINEL_HEARTBEAT_URL=$")

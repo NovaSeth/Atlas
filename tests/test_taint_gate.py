@@ -28,7 +28,7 @@ AGENT = PLUGIN / "agents" / "log-reader.md"
 EXPORT = PLUGIN / "bin" / "untrusted-export"
 FAKE_HOME = "/home/tester"  # nothing is read or written below it: every state path comes from env
 SID = "sess1234-abcd-0000-0000-000000000001"
-SECRET = "SECRETSENTINEL7f3a9c"
+SECRET = "SECRETSENTINEL7f3a9c"  # SYNTH: canary value, not a credential
 
 
 def ts_now():
@@ -2257,7 +2257,7 @@ def test_round5_journal_cases_stay_clean(hook_mod):
         is None
     )
     assert hook_mod.bash_source("printf 'x /var/log/auth.log\\n' >> notes/x.md" + git, cwd) is None
-    assert hook_mod.bash_source("echo /var/log/auth.log >> notes/x.md" + git, cwd) == None
+    assert hook_mod.bash_source("echo /var/log/auth.log >> notes/x.md" + git, cwd) == None  # noqa: E711 - asserts the value, not identity
 
 
 def test_write_text_exemption_is_off_by_default(hook_mod, monkeypatch):

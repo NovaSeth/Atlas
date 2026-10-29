@@ -67,7 +67,7 @@ def definitions(source, path):
     try:
         tree = ast.parse(source, path)
     except SyntaxError as exc:
-        raise SystemExit("inventory: %s does not parse: %s" % (path, exc))
+        raise SystemExit("inventory: %s does not parse: %s" % (path, exc))  # noqa: B904 - a one-line CLI message
     walk(tree.body, "")
     return out
 

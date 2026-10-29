@@ -19,7 +19,7 @@ import re
 import stat
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 SEVERITIES = ["info", "warning", "alert", "critical"]
@@ -138,7 +138,7 @@ def validate(ev):
 
 
 def now_iso():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _rotate(path):
@@ -544,13 +544,13 @@ def cmd_follow(args):
         if problem:
             print(
                 "%s ALERT sentinel.wake-limit: %s; no events shown this hour (limit %d/h), see events.jsonl "
-                "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), problem, limit),
+                "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), problem, limit),
                 flush=True,
             )
         if rolled:
             print(
                 "%s ALERT sentinel.wake-limit: %d event(s) not shown in the last hour (limit %d/h) "
-                "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), rolled[0], limit),
+                "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), rolled[0], limit),
                 flush=True,
             )
 
@@ -576,8 +576,8 @@ def _replay_seen(seen_file):
     """(display key -> time shown, failure): `failure` is the error class name when the list could not be read."""
     done, failure = {}, ""
     try:
-        for l in open(seen_file).read().splitlines():
-            t, _, key = l.partition(" ")
+        for ln in open(seen_file).read().splitlines():
+            t, _, key = ln.partition(" ")
             done[key] = float(t)
     except (OSError, ValueError) as e:
         failure = type(e).__name__
@@ -590,7 +590,7 @@ def _replay_summary(limiter, suppressed, limit, state_failure):
     if problem:
         print(
             "%s ALERT sentinel.wake-limit: %s; no events shown this hour (limit %d/h), see events.jsonl "
-            "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), problem, limit),
+            "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), problem, limit),
             flush=True,
         )
     if state_failure:
@@ -598,7 +598,7 @@ def _replay_summary(limiter, suppressed, limit, state_failure):
     if suppressed and limiter.claim_summary():
         print(
             "%s ALERT sentinel.wake-limit: %d more event(s) not shown (limit %d/h), see events.jsonl "
-            "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), suppressed, limit),
+            "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), suppressed, limit),
             flush=True,
         )
     return state_failure
@@ -624,8 +624,8 @@ def cmd_replay(args):
     limit = wake_max_per_hour()
     limiter = SharedWakeBudget(limit, wake_state_dir(path)) if limit > 0 else None
     suppressed = 0
-    for l in data.decode("utf-8", "replace").splitlines():
-        ev = _parse(l)
+    for ln in data.decode("utf-8", "replace").splitlines():
+        ev = _parse(ln)
         if not ev or validate(ev) or ev["severity"] not in ("alert", "critical"):
             continue
         key = display_key(ev, args.redact_untrusted)

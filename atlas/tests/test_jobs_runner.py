@@ -45,7 +45,7 @@ class TestRunner(RunnerCase):
 
     def test_runner_holds_no_contract(self):
         text = JOBS.read_text()
-        code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+        code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
         self.assertNotRegex(code, r'(?m)^\s*check(_last_line|_last_match)? "')  # only helper definitions
 
     def test_contracts_run_in_sorted_order(self):
@@ -147,7 +147,7 @@ class TestHourlyExample(RunnerCase):
 
     def problems(self):
         r = self.run_jobs(HOURLY_TASK_LOG=self.log)
-        return [l for l in r.stdout.splitlines() if "hourly task" in l]
+        return [ln for ln in r.stdout.splitlines() if "hourly task" in ln]
 
     @staticmethod
     def ts(minutes_ago):

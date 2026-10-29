@@ -61,7 +61,7 @@ class Case(unittest.TestCase):
 
     def bus(self):
         p = self.tmp / "events.jsonl"
-        return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        return [json.loads(ln) for ln in p.read_text().splitlines()] if p.exists() else []
 
     def notice_list(self):
         return self.notices.read_text().split("==\n")[:-1] if self.notices.exists() else []

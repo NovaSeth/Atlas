@@ -62,9 +62,9 @@ class ApacheTests(unittest.TestCase):
 
     def test_uses_globallog_not_customlog(self):
         # server-level CustomLog is not inherited by vhosts that define their own CustomLog
-        directives = [l for l in self.text.splitlines() if not l.lstrip().startswith("#")]
-        self.assertTrue(any(l.startswith("GlobalLog ") for l in directives))
-        self.assertFalse(any(l.lstrip().startswith("CustomLog") for l in directives))
+        directives = [ln for ln in self.text.splitlines() if not ln.lstrip().startswith("#")]
+        self.assertTrue(any(ln.startswith("GlobalLog ") for ln in directives))
+        self.assertFalse(any(ln.lstrip().startswith("CustomLog") for ln in directives))
 
     def test_paths_covered(self):
         for frag in ("wp-config", "/\\.env", "/\\.git/", "dump", "\\.sql\\.gz", "phpinfo", "server-status"):
@@ -75,7 +75,7 @@ class ApacheTests(unittest.TestCase):
     def test_uses_bytes_without_headers(self):
         # %B (body only) not %O: %O includes TLS/headers overhead (an empty 200 once looked like a leak)
         self.assertIn("%B", self.text)
-        log = [l for l in self.text.splitlines() if l.startswith("GlobalLog")][0]
+        log = [ln for ln in self.text.splitlines() if ln.startswith("GlobalLog")][0]
         self.assertNotIn("%O", log)
 
 

@@ -8,9 +8,8 @@ import subprocess
 import threading
 import unittest
 
-from helpers import SENTINEL, tmpdir
-
 import notify  # noqa: E402
+from helpers import SENTINEL, tmpdir
 
 ESC = SENTINEL / "escalation.sh"
 

@@ -6,13 +6,11 @@ import subprocess
 import sys
 import time
 import unittest
-from pathlib import Path
 from unittest import mock
-
-from helpers import SENTINEL, tmpdir
 
 import bus  # noqa: E402
 import router  # noqa: E402
+from helpers import SENTINEL, tmpdir
 
 ROOT = SENTINEL.parent
 ESC = SENTINEL / "escalation.sh"

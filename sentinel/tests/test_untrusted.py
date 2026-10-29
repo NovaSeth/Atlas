@@ -9,9 +9,8 @@ import stat
 import unittest
 from unittest import mock
 
-from helpers import tmpdir
-
 import untrusted  # noqa: E402
+from helpers import tmpdir
 
 
 def printable_ascii(s):

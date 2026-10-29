@@ -5,9 +5,10 @@ import json
 import os
 import re
 import time
+
 import tg_core
-import tg_state
 import tg_hooks
+import tg_state
 
 
 def _lines_reversed(real):

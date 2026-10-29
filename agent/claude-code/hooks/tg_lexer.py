@@ -1,8 +1,8 @@
 """Shell words and operators, including quoted text, substitutions and heredocs."""
 
 import re
-import tg_core
 
+import tg_core
 
 SEPARATORS = frozenset({";", "&", "&&", "||", "|", "|&"})
 

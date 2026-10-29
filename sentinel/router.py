@@ -25,10 +25,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "atlas"))
-from i18n import t  # noqa: E402
-
 import bus  # noqa: E402
 import notify as _notify  # noqa: E402
+
+from i18n import t  # noqa: E402
 
 default_notify = _notify.send  # alias kept for callers and tests
 

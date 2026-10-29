@@ -2,14 +2,13 @@
 computes its own paths (tests reload it with different env)."""
 
 import ast
-import sys
 import json
 import os
 import shutil
 import subprocess
-import pytest
-from pathlib import Path
+import sys
 
+import pytest
 from test_taint_gate import HOOK, load_hook_module
 
 HOOKS = HOOK.parent

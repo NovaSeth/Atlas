@@ -158,8 +158,8 @@ class Collector:
         threading.Thread(target=self._read, args=(proc,), daemon=True).start()
 
     def _read(self, proc):
-        for l in proc.stdout:
-            self.lines.append(l.rstrip("\n"))
+        for ln in proc.stdout:
+            self.lines.append(ln.rstrip("\n"))
 
 
 class TestSessionSensor(unittest.TestCase):
@@ -237,7 +237,7 @@ class TestPackagesCrontabsThresholds(unittest.TestCase):
 
     def test_certs(self):
         a, n = self.atlas.thresholds(self.snap({"x.pl": {"days": 10}}), 1)
-        self.assertTrue(any("x.pl" in l for l in a))
+        self.assertTrue(any("x.pl" in ln for ln in a))
         a, n = self.atlas.thresholds(self.snap({"x.pl": {"days": 60}}), 1)
         self.assertEqual((a, n), ([], []))  # reverse
         a, n = self.atlas.thresholds(self.snap({}), 2)
@@ -247,9 +247,9 @@ class TestPackagesCrontabsThresholds(unittest.TestCase):
 
     def test_resources(self):
         a, n = self.atlas.thresholds(self.snap({"x": {"days": 60}}, disk="95%"), 1)
-        self.assertTrue(any("disk" in l for l in a))
+        self.assertTrue(any("disk" in ln for ln in a))
         a, n = self.atlas.thresholds(self.snap({"x": {"days": 60}}, mem="100"), 1)
-        self.assertTrue(any("RAM" in l for l in a))
+        self.assertTrue(any("RAM" in ln for ln in a))
         a, n = self.atlas.thresholds(self.snap({"x": {"days": 60}}, disk="41%", mem="3700"), 1)
         self.assertEqual((a, n), ([], []))
         a, n = self.atlas.thresholds(self.snap({"x": {"days": 60}}, disk="?", mem=""), 1)
@@ -294,10 +294,10 @@ class TestSsh(unittest.TestCase):
         self.assertEqual(self.run_sensor(self.line("198.51.100.4")).returncode, 0)
 
     def test_pubkey_accepted_algorithms_gives_none(self):
-        l = self.line(
+        ln = self.line(
             "203.0.113.99", text="userauth_pubkey: key type ssh-rsa not in PubkeyAcceptedAlgorithms [preauth] from"
         )
-        self.assertEqual(self.run_sensor(l).returncode, 0)
+        self.assertEqual(self.run_sensor(ln).returncode, 0)
 
     def test_older_than_window_clears(self):
         self.assertEqual(self.run_sensor(self.line("203.0.113.99", hours_ago=30)).returncode, 0)

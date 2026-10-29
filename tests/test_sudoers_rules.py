@@ -16,7 +16,7 @@ RESIDENT = ROOT / "examples" / "sudoers.d" / "atlas-resident"
 
 
 def rules(path):
-    return "\n".join(l for l in path.read_text().splitlines() if not l.lstrip().startswith("#"))
+    return "\n".join(ln for ln in path.read_text().splitlines() if not ln.lstrip().startswith("#"))
 
 
 def ak_patterns():

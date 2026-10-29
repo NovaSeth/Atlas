@@ -51,7 +51,7 @@ class InstallDryRun(unittest.TestCase):
         return r.stdout
 
     def planned(self, out):
-        return [l[len("[dry-run] ") :] for l in out.splitlines() if l.startswith("[dry-run] ")]
+        return [ln[len("[dry-run] ") :] for ln in out.splitlines() if ln.startswith("[dry-run] ")]
 
     def test_plans_every_step_and_changes_nothing(self):
         out = self.run_install()
@@ -99,11 +99,11 @@ class InstallDryRun(unittest.TestCase):
         r = self.dry(code)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         steps, inside = [], False
-        for l in r.stdout.splitlines():
-            if l.startswith("==> "):
-                inside = l.startswith("==> copying the code")
-            elif inside and l.startswith("[dry-run] "):
-                steps.append(shlex.split(l[len("[dry-run] ") :]))
+        for ln in r.stdout.splitlines():
+            if ln.startswith("==> "):
+                inside = ln.startswith("==> copying the code")
+            elif inside and ln.startswith("[dry-run] "):
+                steps.append(shlex.split(ln[len("[dry-run] ") :]))
         new, old = "%s/.atlas-install-new" % code, "%s/.atlas-install-old" % code
         for s in steps:
             if s[0] == "rm":  # only the installer's own staging dirs are ever deleted
@@ -276,7 +276,7 @@ class Templates(unittest.TestCase):
 
     def test_sudoers_has_no_open_wildcard_and_no_write_command(self):
         text = (ROOT / "examples" / "sudoers.d" / "atlas").read_text()
-        rules = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+        rules = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
         self.assertNotRegex(rules, r"/\*")  # no "dir/*": it would match ../ and extra arguments
         self.assertNotIn("ALL=(ALL)", rules)
         for bad in ("/usr/bin/tee", "/usr/bin/rm", "/usr/bin/cp", "/usr/bin/bash", "/usr/bin/sh ", "-exec", "-delete"):

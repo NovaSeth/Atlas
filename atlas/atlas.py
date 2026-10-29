@@ -19,14 +19,24 @@ because someone changed it. If neither the owner nor the resident did it, it is 
 Volatile numbers (disk, RAM, load, ban counts) live under "vitals" and are never diffed.
 """
 
-import contextlib, hashlib, json, os, pwd, re, shlex, shutil, subprocess, sys
-from datetime import datetime, timezone
+import contextlib
+import hashlib
+import json
+import os
+import pwd
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from datetime import UTC, datetime
 
 # Code and instance state are separate: SENTINEL_ATLAS selects the state directory (baseline, current,
 # snapshots, sentinel.env). Unset = next to the code.
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, CODE_DIR)
 import envfile  # noqa: E402
+
 from i18n import t  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(CODE_DIR), "sentinel"))
@@ -191,15 +201,15 @@ def services(errors=None):
         measure("services", "systemctl list-units --type=service --state=running --no-legend --plain", errors=errors)
         or ""
     )
-    names = sorted(l.split()[0] for l in out.splitlines() if l.strip())
+    names = sorted(ln.split()[0] for ln in out.splitlines() if ln.strip())
     enabled = measure("services", "systemctl list-unit-files --state=enabled --no-legend --plain", errors=errors) or ""
-    en = sorted(l.split()[0] for l in enabled.splitlines() if l.strip())
+    en = sorted(ln.split()[0] for ln in enabled.splitlines() if ln.strip())
     return {"running": names, "enabled": en}
 
 
 def timers(errors=None):
     out = measure("timers", "systemctl list-timers --all --no-legend --plain", errors=errors) or ""
-    return sorted(re.sub(r"\s+", " ", l).split(" ")[-2] for l in out.splitlines() if ".timer" in l)
+    return sorted(re.sub(r"\s+", " ", ln).split(" ")[-2] for ln in out.splitlines() if ".timer" in ln)
 
 
 def listeners(errors=None):
@@ -327,7 +337,7 @@ def crontabs(errors=None):
         elif rc != 0:
             record(errors, "crontabs", f"crontab -u {u} rc={rc} {err or out}")
             continue
-        lines = [l for l in out.splitlines() if l.strip() and not l.startswith("#")]
+        lines = [ln for ln in out.splitlines() if ln.strip() and not ln.startswith("#")]
         if lines:
             digest = hashlib.sha256("\n".join(lines).encode()).hexdigest()[:SHA_PREFIX]
             res[u] = {"lines": len(lines), "sha": digest}
@@ -350,8 +360,8 @@ def packages(errors=None):
         or ""
     )
     res = []
-    for l in out.splitlines():
-        f = l.split()
+    for ln in out.splitlines():
+        f = ln.split()
         if len(f) == 2 and f[0] == "ii":
             res.append(f[1])
     return sorted(res)
@@ -521,7 +531,7 @@ def firewall(errors=None):
     if not have("ufw"):
         return []
     out = measure("firewall", "sudo ufw status numbered", errors=errors) or ""
-    return [re.sub(r"\s+", " ", l.strip()) for l in out.splitlines() if l.strip().startswith("[")]
+    return [re.sub(r"\s+", " ", ln.strip()) for ln in out.splitlines() if ln.strip().startswith("[")]
 
 
 APT_LIST = "/etc/apt/sources.list"
@@ -624,7 +634,7 @@ def host_key_fingerprints(errors=None):
     for kf in HOST_KEY_FILES:
         if probe("sensitive_files", f"sudo test -e {shlex.quote(kf)}", errors):
             out = measure("sensitive_files", f"sudo ssh-keygen -lf {shlex.quote(kf)}", errors=errors) or ""
-            keys += [l.split()[1] for l in out.splitlines() if len(l.split()) > 2]
+            keys += [ln.split()[1] for ln in out.splitlines() if len(ln.split()) > 2]
     return sorted(keys)
 
 
@@ -676,14 +686,14 @@ def silent_failures_checked():
         if rc != 0:
             unknown[u] = f"journalctl rc={rc} {jerr or jout}"[:CERT_ERROR_LIMIT]
             continue
-        lines = [l for l in jout.splitlines() if re.search("Failed with result|Succeeded|Finished", l)]
+        lines = [ln for ln in jout.splitlines() if re.search("Failed with result|Succeeded|Finished", ln)]
         if not lines:
             continue
         last = lines[-1]
         if "Failed with result" not in last:
             continue
         rc7, j7, e7 = run_checked(f"sudo journalctl -u {shlex.quote(u)} --since -7d --no-pager")
-        failures = sum(1 for l in j7.splitlines() if "Failed with result" in l) if rc7 == 0 else "?"
+        failures = sum(1 for ln in j7.splitlines() if "Failed with result" in ln) if rc7 == 0 else "?"
         when = last.split()[0] if last.split() else "?"
         # human-facing text (lands in ALERT): from the catalog
         res[u] = t("atlas.silent_failure", when=when, count=failures)
@@ -769,7 +779,7 @@ def vital_failed_units(bad):
     if out is None:
         bad["failed_units"] = "systemctl --failed failed"
         return "?"
-    return str(len([l for l in out.splitlines() if l.strip()]))
+    return str(len([ln for ln in out.splitlines() if ln.strip()]))
 
 
 def vital_uptime(bad):
@@ -831,7 +841,7 @@ def snapshot():
     errors = {}
     certs_, certs_error = certs_measure()
     snap = {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "host": host_info(errors),
         "certs": certs_,
     }
@@ -968,7 +978,7 @@ def tell_human(subject, body, kind):
 
 
 def now_iso():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def read_object(path):
@@ -1098,10 +1108,10 @@ def cmd_thresholds():
     if snap is None:
         return rc
     alarms, unknown = thresholds(snap, ssl_vhost_count())
-    for l in alarms:
-        print("  " + l)
-    for l in unknown:
-        print("  " + l, file=sys.stderr)
+    for ln in alarms:
+        print("  " + ln)
+    for ln in unknown:
+        print("  " + ln, file=sys.stderr)
     return 2 if unknown else (1 if alarms else 0)
 
 

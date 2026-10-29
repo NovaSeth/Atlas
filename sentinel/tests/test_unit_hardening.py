@@ -3,8 +3,8 @@ user, `sendmail -odq`): NoNewPrivileges=yes, an empty CapabilityBoundingSet= and
 setuid MTA (exim) fail; ProtectSystem=full + ProtectHome=read-only + PrivateTmp + ProtectControlGroups kept it working."""
 
 import re
-import shutil
 import shlex
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -51,7 +51,7 @@ STREAM_REQUIRED = [
 def service_lines(name):
     text = (UNITS / name).read_text()
     body = text.split("[Service]", 1)[1].split("\n[", 1)[0]
-    return [l.strip() for l in body.splitlines() if l.strip() and not l.strip().startswith("#")]
+    return [ln.strip() for ln in body.splitlines() if ln.strip() and not ln.strip().startswith("#")]
 
 
 def render(name, d):
@@ -81,7 +81,7 @@ class Hardening(unittest.TestCase):
 
     def test_escalation_has_no_option_that_breaks_setuid_mail(self):
         lines = service_lines("sentinel-escalation.service")
-        extra = {l for l in lines if l.split("=", 1)[0] not in BASE_KEYS}
+        extra = {ln for ln in lines if ln.split("=", 1)[0] not in BASE_KEYS}
         self.assertEqual(extra, ESC_HARDENING)
 
     def test_verify_script_prints_commands_without_root(self):
@@ -102,9 +102,9 @@ class Hardening(unittest.TestCase):
             timeout=60,
         )
         self.assertEqual(r.returncode, 0, r.stderr)
-        esc = [l for l in r.stdout.splitlines() if "escalation" in l and "systemd-run" in l]
+        esc = [ln for ln in r.stdout.splitlines() if "escalation" in ln and "systemd-run" in ln]
         self.assertTrue(esc)
-        self.assertFalse([l for l in esc if "NoNewPrivileges" in l])
+        self.assertFalse([ln for ln in esc if "NoNewPrivileges" in ln])
 
     def test_printed_probes_use_the_unit_properties_and_queue_mail(self):
         r = subprocess.run(
@@ -128,7 +128,7 @@ class Hardening(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         commands = [shlex.split(line) for line in r.stdout.splitlines() if line.startswith("systemd-run ")]
         self.assertEqual(len(commands), 3)
-        for command, expected in zip(commands, (set(STREAM_REQUIRED), ESC_HARDENING, ESC_HARDENING)):
+        for command, expected in zip(commands, (set(STREAM_REQUIRED), ESC_HARDENING, ESC_HARDENING)):  # noqa: B905 - lengths are fixed by the test data
             props = {command[i + 1] for i, arg in enumerate(command) if arg == "-p"}
             self.assertEqual(props, {p.replace("@ATLAS_STATE@", "/var/lib/atlas") for p in expected} | {"User=atlas"})
         self.assertIn("journalctl -n 1 -q --no-pager", commands[0][-3])

@@ -24,15 +24,16 @@ import re
 import shlex
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(BASE))
 # untrusted.clean lives with the bus code in <repo>/sentinel
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(BASE)), "sentinel"))
 import envfile  # noqa: E402
-from i18n import t  # noqa: E402
 from untrusted import clean  # noqa: E402
+
+from i18n import t  # noqa: E402
 
 envfile.load(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE))
 KNOWN = os.environ.get(
@@ -46,17 +47,17 @@ PATTERN = re.compile(r"^(\S+) \S+ \S+: Accepted (\S+) for (\S+) from (\S+) port 
 def load_known(path):
     res = set()
     with open(path) as f:
-        for l in f:
-            l = l.split("#", 1)[0].strip()
-            if l:
-                res.add(l)
+        for ln in f:
+            ln = ln.split("#", 1)[0].strip()
+            if ln:
+                res.add(ln)
     return res
 
 
 def events(text, known, now):
     latest = {}
-    for l in text.splitlines():
-        m = PATTERN.match(l)
+    for ln in text.splitlines():
+        m = PATTERN.match(ln)
         if not m:
             continue
         when, method, user, ip = m.groups()
@@ -88,7 +89,7 @@ def main():
     if p.returncode != 0:
         print(t("ssh.journal_rc", rc=p.returncode, stderr=p.stderr.strip()[:200]), file=sys.stderr)
         return 2
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     ev = events(p.stdout, known, now)
     for (ip_raw, user_raw), (when, method) in sorted(ev.items()):
         # the user name is whatever the client asked to log in as: untrusted text in ALERT

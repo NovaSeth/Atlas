@@ -1,10 +1,10 @@
 """Subagents cannot act on untrusted data they read (audit 4, RF3); a read-hook crash leaves a taint flag (audit 15);
 an unknown transcript format is named, not silent (audit 22)."""
 
+# ruff: noqa: F811  (pytest fixtures are imported from test_taint_gate and used as test arguments)
 import json
 
 import pytest
-
 from test_taint_gate import AID, SID, completion, gate, launch_agent, tainted, write_config  # noqa: F401
 
 SUB = {"agent_id": "sub0000000000001", "agent_type": "general-purpose"}
@@ -127,6 +127,7 @@ def test_known_format_without_evidence_is_not_called_unknown(tainted):
 
 def _load_hook():
     import importlib.util
+
     from test_taint_gate import HOOK
 
     spec = importlib.util.spec_from_file_location("taint_gate_inproc", HOOK)

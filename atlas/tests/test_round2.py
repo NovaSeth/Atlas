@@ -21,8 +21,9 @@ ATLAS = HERE.parent
 ROOT = ATLAS.parent
 sys.path.insert(0, str(ATLAS))
 sys.path.insert(0, str(HERE))
+from test_iteration1 import Collector, make_patrol, patrol, write_atomic  # noqa: E402
+
 import atlas  # noqa: E402
-from test_iteration1 import make_patrol, patrol, Collector, write_atomic  # noqa: E402
 
 HEALTHY_CERT = "Certificate Name: ok.example\n    Expiry Date: 2027-01-01 00:00:00+00:00 (VALID: 60 days)\n"
 EXPIRED_CERT = "Certificate Name: expired.example\n    Expiry Date: 2026-10-01 00:00:00+00:00 (INVALID: EXPIRED)\n"
@@ -86,20 +87,20 @@ class TestCerts(unittest.TestCase):
         self.assertEqual(err, "")
         a, n = atlas.thresholds(snap(res, err), 2)
         self.assertEqual(n, [])
-        self.assertTrue(any("expired.example" in l for l in a), a)
-        self.assertFalse(any("ok.example" in l for l in a), a)
+        self.assertTrue(any("expired.example" in ln for ln in a), a)
+        self.assertFalse(any("ok.example" in ln for ln in a), a)
 
     def test_r2_unparseable_expiry_is_unknown_not_dropped(self):
         res, err = self.measure(0, HEALTHY_CERT + "Certificate Name: weird.example\n    Expiry Date: ???\n")
         self.assertIn("weird.example", res)
         a, n = atlas.thresholds(snap(res, err), 2)
-        self.assertTrue(any("weird.example" in l for l in n), n)
+        self.assertTrue(any("weird.example" in ln for ln in n), n)
 
     def test_r2_cert_without_expiry_line_is_unknown(self):
         res, err = self.measure(0, "Certificate Name: noexp.example\n    Domains: a.b\n")
         self.assertIn("noexp.example", res)
         a, n = atlas.thresholds(snap(res, err), 1)
-        self.assertTrue(any("noexp.example" in l for l in n), n)
+        self.assertTrue(any("noexp.example" in ln for ln in n), n)
 
 
 class TestSilentFailures(unittest.TestCase):

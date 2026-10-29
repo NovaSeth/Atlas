@@ -21,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 ATLAS = HERE.parent
 ROOT = ATLAS.parent
 sys.path.insert(0, str(HERE))
-from test_iteration1 import make_patrol, patrol, Collector  # noqa: E402
+from test_iteration1 import Collector, make_patrol, patrol  # noqa: E402
 
 PROBES = ATLAS / "sensors" / "http_probes.py"
 ESC = ROOT / "sentinel" / "escalation.sh"
@@ -62,7 +62,7 @@ def stub_bus(d):
 
 def events(log):
     p = Path(log)
-    return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+    return [json.loads(ln) for ln in p.read_text().splitlines()] if p.exists() else []
 
 
 class TestAtomicAlert(unittest.TestCase):

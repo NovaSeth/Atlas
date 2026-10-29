@@ -5,12 +5,10 @@ import subprocess
 import sys
 import time
 import unittest
-
 from unittest import mock
 
-from helpers import SENTINEL, notify_calls, read_bus, stub_notify, tmpdir, wait_for
-
 import stream  # noqa: E402
+from helpers import SENTINEL, notify_calls, read_bus, stub_notify, tmpdir, wait_for
 
 STREAM_PY = SENTINEL / "stream.py"
 
@@ -478,7 +476,7 @@ class LiveSourceOutageTests(unittest.TestCase):
         self.addCleanup(os.environ.pop, "SENTINEL_STABLE_SECS", None)
         state = {"ok": True}
         stop = threading.Event()
-        src = stream.Source("web", lambda: ["sleep", "30"], lambda l: None, stop, readable=lambda: state["ok"])
+        src = stream.Source("web", lambda: ["sleep", "30"], lambda ln: None, stop, readable=lambda: state["ok"])
         src.start()
         self.addCleanup(lambda: (stop.set(), src.terminate()))
         wait_for(lambda: src.up_since is not None)
@@ -692,7 +690,7 @@ class DaemonTests(DaemonBase):
         while time.time() < end and got.count(b"WATCHDOG=1") < 2:
             try:
                 got.append(s.recv(100))
-            except socket.timeout:
+            except TimeoutError:
                 pass
         self.assertIn(b"READY=1", got)
         self.assertGreaterEqual(got.count(b"WATCHDOG=1"), 2)

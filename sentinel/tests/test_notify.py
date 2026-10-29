@@ -9,10 +9,9 @@ import time
 import unittest
 from unittest import mock
 
-from helpers import SENTINEL, make_event, notify_calls, stub_notify, tmpdir
-
 import notify  # noqa: E402
 import router  # noqa: E402
+from helpers import SENTINEL, make_event, notify_calls, stub_notify, tmpdir
 
 ESC = SENTINEL / "escalation.sh"
 

@@ -42,8 +42,9 @@ import envfile  # noqa: E402
 envfile.load(os.environ.get("SENTINEL_ATLAS") or Path(__file__).resolve().parent.parent / "atlas")
 import bus  # noqa: E402
 import router  # noqa: E402
-from i18n import t  # noqa: E402
 from untrusted import clean, quote, suspicious  # noqa: E402
+
+from i18n import t  # noqa: E402
 
 # 60 s heartbeat: escalation treats > 5 min of silence as a problem, so 5 beats may be missed.
 DEFAULT_HEARTBEAT_SECS = 60

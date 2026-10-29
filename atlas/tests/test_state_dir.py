@@ -9,7 +9,6 @@ Everything runs on temp dirs and stubs: no real snapshot, no sudo, no mail, no n
 import importlib.util
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -23,7 +22,7 @@ HERE = Path(__file__).resolve().parent
 ATLAS = HERE.parent
 ROOT = ATLAS.parent
 sys.path.insert(0, str(HERE))
-from test_iteration1 import make_patrol, Collector  # noqa: E402
+from test_iteration1 import Collector, make_patrol  # noqa: E402
 
 LITERAL = "/home/"  # no instance path of any kind in code: everything comes from config or the state dir
 
@@ -351,8 +350,8 @@ class TestNoInstanceLiterals(unittest.TestCase):
         hits = [
             f"{f.relative_to(ROOT)}:{i}"
             for f in files
-            for i, l in enumerate(f.read_text().splitlines(), 1)
-            if LITERAL in l
+            for i, ln in enumerate(f.read_text().splitlines(), 1)
+            if LITERAL in ln
         ]
         self.assertEqual(hits, [])
 
@@ -377,7 +376,7 @@ class TestUnits(unittest.TestCase):
 
     def test_env_example_documents_every_variable(self):
         text = (ROOT / "examples" / "sentinel.env").read_text()
-        keys = {l.split("=", 1)[0] for l in text.splitlines() if l and not l.startswith("#") and "=" in l}
+        keys = {ln.split("=", 1)[0] for ln in text.splitlines() if ln and not ln.startswith("#") and "=" in ln}
         for k in (
             "SENTINEL_EMAIL",
             "SENTINEL_NOTIFY_CMD",
@@ -397,7 +396,7 @@ class TestUnits(unittest.TestCase):
         self.assertNotIn(LITERAL, text)
 
     def test_crontab_template(self):
-        lines = [l for l in (self.U / "crontab.example").read_text().splitlines() if l and not l.startswith("#")]
+        lines = [ln for ln in (self.U / "crontab.example").read_text().splitlines() if ln and not ln.startswith("#")]
         self.assertEqual(len(lines), 2, lines)
         self.assertTrue(
             lines[0].startswith(
@@ -408,7 +407,7 @@ class TestUnits(unittest.TestCase):
         self.assertTrue(
             lines[1].startswith("40 4 * * * find @ATLAS_STATE@/snapshots -name '*.json' -mtime +30 -delete"), lines[1]
         )
-        self.assertTrue(all("atlas-managed" in l for l in lines))  # the installer replaces exactly these
+        self.assertTrue(all("atlas-managed" in ln for ln in lines))  # the installer replaces exactly these
 
 
 if __name__ == "__main__":

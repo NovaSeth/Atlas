@@ -26,9 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 for m in SUBMODULES:
     sys.modules.pop(m, None)
 
-import json
-import re
-import _signal as signal
+import _signal as signal  # noqa: E402 - sys.path is set above
+import json  # noqa: E402 - sys.path is set above
+import re  # noqa: E402 - sys.path is set above
 
 _import_error = None
 tg_core = tg_lexer = tg_state = tg_classify = tg_hooks = None
@@ -138,7 +138,7 @@ def main():
             if not isinstance(data, dict):
                 raise ValueError
         except (ValueError, UnicodeDecodeError):
-            raise tg_core.GateError("malformed-input")
+            raise tg_core.GateError("malformed-input")  # noqa: B904 - the gate reports a fixed code, never the chained cause
         event = data.get("hook_event_name")
         tool = data.get("tool_name")
         if event == "UserPromptSubmit":

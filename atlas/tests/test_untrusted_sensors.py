@@ -73,7 +73,7 @@ class TestSessionSensorKeepsLetters(unittest.TestCase):
         p = subprocess.Popen(["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env, stdout=subprocess.PIPE)
         self.addCleanup(p.kill)
         lines = []
-        threading.Thread(target=lambda: [lines.append(l) for l in p.stdout], daemon=True).start()
+        threading.Thread(target=lambda: [lines.append(ln) for ln in p.stdout], daemon=True).start()
         end = time.time() + 10
         while time.time() < end and not lines:
             time.sleep(0.1)
@@ -175,8 +175,8 @@ class TestHttpProbesSanitized(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stderr)
         lines = r.stdout.strip().splitlines()
         self.assertEqual(len(lines), 2, lines)
-        for l in lines:
-            self.assertTrue(printable_ascii(l), repr(l))
+        for ln in lines:
+            self.assertTrue(printable_ascii(ln), repr(ln))
         self.assertNotIn("h" * 90, r.stdout)
 
 

@@ -21,8 +21,9 @@ ATLAS = ROOT / "atlas"
 sys.path.insert(0, str(ATLAS))
 sys.path.insert(0, str(ATLAS / "tests"))
 import envfile  # noqa: E402
-import i18n  # noqa: E402
 from test_iteration1 import make_patrol, patrol  # noqa: E402
+
+import i18n  # noqa: E402
 
 PH = re.compile(r"\{([a-z_]+)\}")
 
