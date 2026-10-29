@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """current.json / baseline.json that are not a JSON object end in an explicit error, exit 2 (GC5)."""
+
 import contextlib
 import importlib.util
 import io
@@ -25,8 +26,11 @@ def load(tmp):
 class StateFilesValidated(unittest.TestCase):
     def run_cmd(self, m, cmd):
         err = io.StringIO()
-        with mock.patch.object(sys, "argv", ["atlas.py", cmd]), contextlib.redirect_stderr(err), \
-                contextlib.redirect_stdout(io.StringIO()):
+        with (
+            mock.patch.object(sys, "argv", ["atlas.py", cmd]),
+            contextlib.redirect_stderr(err),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             rc = m.main()
         return rc, err.getvalue()
 

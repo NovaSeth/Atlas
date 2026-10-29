@@ -3,13 +3,14 @@
 clean/quote make it printable, bounded ASCII; suspicious() flags instruction-like text as a signal
 (precision over recall). It is not a defense: an agent reading raw logs needs a quarantined reader.
 """
+
 import os
 import stat
 import unittest
 from unittest import mock
 
+# helpers puts sentinel/ on sys.path: it must be imported before the modules below
 from helpers import tmpdir
-
 import untrusted  # noqa: E402
 
 
@@ -82,8 +83,10 @@ class CleanUnicodeTests(unittest.TestCase):
     """For text addressed to humans (ALERT excerpt): keep every printable letter, drop only what hides."""
 
     def test_polish_and_other_letters_survive(self):
-        text = "Logowanie SSH jako \u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c " \
-               "\u0104\u0106\u0118\u0141\u0143\u00d3\u015a\u0179\u017b, \u00fc\u00df \u65e5\u672c \u2014 ok."
+        text = (
+            "Logowanie SSH jako \u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c "
+            "\u0104\u0106\u0118\u0141\u0143\u00d3\u015a\u0179\u017b, \u00fc\u00df \u65e5\u672c \u2014 ok."
+        )
         self.assertEqual(untrusted.clean_unicode(text), text)
 
     def test_ansi_sequences_are_removed_entirely(self):
@@ -106,17 +109,27 @@ class CleanUnicodeTests(unittest.TestCase):
     def test_cli_filters_stdin(self):
         import subprocess
         import sys
+
         raw = "ATLAS: \x1b[1m\u0142\u00f3d\u017a\u200b \u202eend\n".encode()
-        r = subprocess.run([sys.executable, "-I", str(untrusted.__file__), "clean-unicode", "300"],
-                           input=raw, capture_output=True, timeout=30)
+        r = subprocess.run(
+            [sys.executable, "-I", str(untrusted.__file__), "clean-unicode", "300"],
+            input=raw,
+            capture_output=True,
+            timeout=30,
+        )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.decode("utf-8"), "ATLAS: \u0142\u00f3d\u017a end ")
 
     def test_cli_survives_invalid_utf8(self):
         import subprocess
         import sys
-        r = subprocess.run([sys.executable, "-I", str(untrusted.__file__), "clean-unicode", "300"],
-                           input=b"a\xff\xfeb", capture_output=True, timeout=30)
+
+        r = subprocess.run(
+            [sys.executable, "-I", str(untrusted.__file__), "clean-unicode", "300"],
+            input=b"a\xff\xfeb",
+            capture_output=True,
+            timeout=30,
+        )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(r.stdout.decode("utf-8").startswith("a"))
 
@@ -186,9 +199,10 @@ class SuspiciousTests(unittest.TestCase):
                 self.assertEqual(untrusted.suspicious(text), [])
 
     def test_rule_ids_are_documented_and_stable(self):
-        self.assertEqual(set(untrusted.RULES),
-                         {"override", "persona", "new-instructions", "addressed", "run-command",
-                          "context", "base64", "invisible"})
+        self.assertEqual(
+            set(untrusted.RULES),
+            {"override", "persona", "new-instructions", "addressed", "run-command", "context", "base64", "invisible"},
+        )
 
     def test_non_string_and_empty(self):
         self.assertEqual(untrusted.suspicious(""), [])
@@ -197,6 +211,7 @@ class SuspiciousTests(unittest.TestCase):
     def test_huge_input_is_bounded(self):
         # a megabyte of junk must not hang the follower (regexes run on a bounded prefix)
         import time
+
         t0 = time.time()
         untrusted.suspicious("a" * 1_000_000)
         self.assertLess(time.time() - t0, 2.0)
@@ -237,6 +252,7 @@ class ClassifierHookTests(unittest.TestCase):
 
     def test_timeout_is_ignored(self):
         import time
+
         os.environ["ATLAS_INJECTION_CLASSIFIER_CMD"] = self.script("sleep 10; exit 1")
         t0 = time.time()
         self.assertEqual(untrusted.suspicious("/hello"), [])

@@ -20,6 +20,7 @@ Read-only, no LLM. Overridable: HTTP_SITES_DIR, HTTP_EXPECTED, HTTP_FETCH_CMD (t
 takes a URL and prints the status code), HTTP_EXTRA_URLS_CMD (replaces `_extra_urls_cmd`; the older
 name HTTP_ARTICLE_CMD is still accepted).
 """
+
 import glob
 import json
 import os
@@ -35,12 +36,15 @@ sys.path.insert(0, os.path.dirname(BASE))
 # untrusted.clean lives with the bus code in <repo>/sentinel
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(BASE)), "sentinel"))
 import envfile  # noqa: E402
-from i18n import t  # noqa: E402
 from untrusted import clean  # noqa: E402
+
+from i18n import t  # noqa: E402
 
 envfile.load(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE))
 SITES = os.environ.get("HTTP_SITES_DIR") or "/etc/apache2/sites-enabled"
-EXPECTED = os.environ.get("HTTP_EXPECTED", os.path.join(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE), "http-expected.json"))
+EXPECTED = os.environ.get(
+    "HTTP_EXPECTED", os.path.join(os.environ.get("SENTINEL_ATLAS") or os.path.dirname(BASE), "http-expected.json")
+)
 FETCH_CMD = os.environ.get("HTTP_FETCH_CMD", "")
 EXTRA_CMD_ENV = os.environ.get("HTTP_EXTRA_URLS_CMD", os.environ.get("HTTP_ARTICLE_CMD"))
 # 10 s: a healthy vhost answers in well under a second; 10 s separates "slow" from "down"
@@ -68,25 +72,25 @@ def fetch(url):
     """Return the first HTTP status code for url, or raise FetchError."""
     if FETCH_CMD:
         try:
-            r = subprocess.run(shlex.split(FETCH_CMD) + [url], capture_output=True, text=True,
-                               timeout=TIMEOUT + 5)
+            r = subprocess.run(shlex.split(FETCH_CMD) + [url], capture_output=True, text=True, timeout=TIMEOUT + 5)
         except subprocess.TimeoutExpired:
-            raise FetchError("timeout")
+            raise FetchError("timeout")  # noqa: B904 - the message is the whole error
         if r.returncode != 0:
             raise FetchError(r.stderr.strip()[:200] or "fetcher exit %d" % r.returncode)
         try:
             return int(r.stdout.strip())
         except ValueError:
-            raise FetchError("bad fetcher output %r" % r.stdout[:40])
+            raise FetchError("bad fetcher output %r" % r.stdout[:40])  # noqa: B904 - the message is the whole error
     opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with opener.open(urllib.request.Request(url, headers={"User-Agent": "sentinel-http-probe"}),
-                         timeout=TIMEOUT) as resp:
+        with opener.open(
+            urllib.request.Request(url, headers={"User-Agent": "sentinel-http-probe"}), timeout=TIMEOUT
+        ) as resp:
             return resp.status
     except urllib.error.HTTPError as e:
         return e.code  # 3xx (not followed), 4xx, 5xx are answers, not errors
     except Exception as e:  # DNS, TLS, refused, timeout
-        raise FetchError("%s: %s" % (type(e).__name__, e))
+        raise FetchError("%s: %s" % (type(e).__name__, e))  # noqa: B904 - the message is the whole error
 
 
 def vhosts():
@@ -106,7 +110,7 @@ def extra_urls(cmd):
     if not cmd or not cmd.strip():
         return []
     r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=60)
-    urls = [l.strip() for l in r.stdout.splitlines() if l.strip().startswith("http")]
+    urls = [ln.strip() for ln in r.stdout.splitlines() if ln.strip().startswith("http")]
     if r.returncode != 0 or not urls:
         raise FetchError(t("http.extra_lookup_failed", rc=r.returncode, stderr=r.stderr.strip()[:200]))
     return urls
@@ -115,7 +119,7 @@ def extra_urls(cmd):
 def main():
     events, unknown = [], []
     if not os.path.isdir(SITES):
-        return 0   # no Apache sites directory: nothing to probe (an existing but empty one is UNKNOWN)
+        return 0  # no Apache sites directory: nothing to probe (an existing but empty one is UNKNOWN)
     try:
         with open(EXPECTED) as f:
             expected = json.load(f)

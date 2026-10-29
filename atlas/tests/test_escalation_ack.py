@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Escalation notices an acknowledgement made without `atlas.py ack` (D9, RF4): one notice per ALERT content, the
 alert still counts as acknowledged (no PROBLEM). Temp dirs and stubs only."""
+
 import hashlib
 import os
 import shutil
@@ -23,8 +24,11 @@ class EscalationAck(unittest.TestCase):
         self.atlas.mkdir()
         self.bin.mkdir()
         self.mails = self.tmp / "mails.txt"
-        for n, body in (("mail", 'echo "MAIL $*" >> %s; cat >> %s' % (self.mails, self.mails)),
-                        ("screen", "exit 0"), ("systemctl", "exit 0")):
+        for n, body in (
+            ("mail", 'echo "MAIL $*" >> %s; cat >> %s' % (self.mails, self.mails)),
+            ("screen", "exit 0"),
+            ("systemctl", "exit 0"),
+        ):
             (self.bin / n).write_text("#!/bin/bash\n%s\n" % body)
             (self.bin / n).chmod(0o755)
         (self.atlas / "heartbeat.log").write_text("x ok\n")
@@ -38,10 +42,18 @@ class EscalationAck(unittest.TestCase):
 
     def run_esc(self):
         self.hb.touch()
-        env = dict(os.environ, SENTINEL_ATLAS=str(self.atlas), SENTINEL_STATE=str(self.tmp / "state"),
-                   SENTINEL_STREAM_HEARTBEAT=str(self.hb), SENTINEL_EMAIL="nobody@example.com",
-                   SENTINEL_NOTIFY_CMD="", SENTINEL_LANG="en", SENTINEL_RESIDENT_UNIT="",
-                   SENTINEL_RESIDENT_SCREEN="", PATH="%s:%s" % (self.bin, os.environ["PATH"]))
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(self.atlas),
+            SENTINEL_STATE=str(self.tmp / "state"),
+            SENTINEL_STREAM_HEARTBEAT=str(self.hb),
+            SENTINEL_EMAIL="nobody@example.com",
+            SENTINEL_NOTIFY_CMD="",
+            SENTINEL_LANG="en",
+            SENTINEL_RESIDENT_UNIT="",
+            SENTINEL_RESIDENT_SCREEN="",
+            PATH="%s:%s" % (self.bin, os.environ["PATH"]),
+        )
         return subprocess.run(["bash", str(ESC)], env=env, capture_output=True, text=True, timeout=90)
 
     def mail_count(self, word):

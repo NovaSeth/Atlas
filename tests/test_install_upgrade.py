@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Installer: refuses paths that would break sed/systemd rendering (audit 21), creates and migrates the runtime state
 (audit 8) and restarts the stream on upgrade. Dry runs only: no root, no system change."""
+
 import os
 import pwd
 import shutil
@@ -22,8 +23,13 @@ class InstallUpgrade(unittest.TestCase):
 
     def dry(self, *args, code="/opt/atlas", user="atlas-test-nobody", env=None):
         e = dict(os.environ, **(env or {}))
-        return subprocess.run(["bash", str(INSTALL), "--dry-run", "--code", code, "--state", str(self.state),
-                               "--user", user, *args], capture_output=True, text=True, timeout=120, env=e)
+        return subprocess.run(
+            ["bash", str(INSTALL), "--dry-run", "--code", code, "--state", str(self.state), "--user", user, *args],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            env=e,
+        )
 
     def test_odd_characters_in_paths_are_refused_before_any_action(self):
         for bad in ("/opt/at las", "/opt/a|b", "/opt/a&b", "/opt/a%b", "/opt/a\\b"):
@@ -66,7 +72,9 @@ class InstallUpgrade(unittest.TestCase):
     def test_stream_is_restarted_after_the_units(self):
         out = self.dry().stdout
         self.assertIn("systemctl try-restart sentinel-stream.service", out)
-        self.assertLess(out.index("systemctl daemon-reload"), out.index("systemctl try-restart sentinel-stream.service"))
+        self.assertLess(
+            out.index("systemctl daemon-reload"), out.index("systemctl try-restart sentinel-stream.service")
+        )
 
     def _overlap(self, legacy, state=None, code="/opt/atlas"):
         legacy.mkdir(parents=True, exist_ok=True)

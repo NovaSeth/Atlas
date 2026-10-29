@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared bash helpers for every Atlas/Sentinel entrypoint. Source it; it defines functions only.
 #
 #   atlas_load_env <state dir>   read <state dir>/sentinel.env (KEY=VALUE lines, no shell code);

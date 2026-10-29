@@ -1,0 +1,13 @@
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = ["E4", "E7", "E9", "F", "W", "I", "B", "UP"]
+ignore = ["UP031"]  # printf formatting is the house style
+
+[format]
+quote-style = "double"
+
+[lint.per-file-ignores]
+# helpers.py puts sentinel/ on sys.path as an import side effect, so it must stay the first local import.
+"sentinel/tests/*.py" = ["I001"]

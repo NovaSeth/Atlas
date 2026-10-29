@@ -17,6 +17,7 @@ A denial prints the PreToolUse deny JSON and exits 0.
 Internal errors follow P3: Read/Grep/Glob are allowed, everything else is denied.
 The gate never stores untrusted text (G1): state and log hold fixed source codes and times only.
 """
+
 import os
 import sys
 
@@ -25,9 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 for m in SUBMODULES:
     sys.modules.pop(m, None)
 
-import json
-import re
-import _signal as signal
+import _signal as signal  # noqa: E402 - sys.path is set above
+import json  # noqa: E402 - sys.path is set above
+import re  # noqa: E402 - sys.path is set above
 
 _import_error = None
 tg_core = tg_lexer = tg_state = tg_classify = tg_hooks = None
@@ -43,8 +44,13 @@ for _module_name in ("tg_core", "tg_lexer", "tg_state", "tg_classify", "tg_hooks
 
 for _module in sorted(_loaded, key=lambda module: SUBMODULES.index(module.__name__)):
     for _name in vars(_module):
-        if not _name.startswith("__") and _name not in ("_CONFIG", "_ARTIFACTS", "_ARTIFACTS_FULL",
-                                                     "_LATENT", "_LATENT_FULL"):
+        if not _name.startswith("__") and _name not in (
+            "_CONFIG",
+            "_ARTIFACTS",
+            "_ARTIFACTS_FULL",
+            "_LATENT",
+            "_LATENT_FULL",
+        ):
             globals()[_name] = getattr(_module, _name)
 
 
@@ -52,6 +58,7 @@ def __getattr__(name):
     if name in ("_CONFIG", "_ARTIFACTS", "_ARTIFACTS_FULL", "_LATENT", "_LATENT_FULL"):
         return getattr(tg_state, name)
     import tg_provenance
+
     return getattr(tg_provenance, name)
 
 
@@ -60,17 +67,14 @@ def raw_event(raw):
     return m.group(1).decode() if m else None
 
 
-
 def raw_tool(raw):
     m = re.search(rb'"tool_name"\s*:\s*"([A-Za-z0-9_.-]+)"', raw)
     return m.group(1).decode() if m else None
 
 
-
 def raw_session(raw):
     m = re.search(rb'"session_id"\s*:\s*"([A-Za-z0-9_-]{1,128})"', raw)
     return m.group(1).decode() if m else None
-
 
 
 def _deadline(signum, frame):
@@ -86,16 +90,23 @@ def _import_failure(raw, module):
                 raise ValueError("no-session")
             directory = os.environ.get("TAINT_STATE_DIR") or os.path.expanduser("~/.claude/taint")
             os.makedirs(directory, mode=0o700, exist_ok=True)
-            fd = os.open(os.path.join(directory, sid + ".tainted"),
-                         os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            fd = os.open(os.path.join(directory, sid + ".tainted"), os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
             os.close(fd)
         except BaseException:
             # Reads retain onFailure semantics; a broken install still denies every write.
             pass
     elif event != "UserPromptSubmit":
-        sys.stdout.write(json.dumps({"hookSpecificOutput": {
-            "hookEventName": "PreToolUse", "permissionDecision": "deny",
-            "permissionDecisionReason": "TAINT GATE: gate error: import-" + module}}))
+        sys.stdout.write(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": "TAINT GATE: gate error: import-" + module,
+                    }
+                }
+            )
+        )
         sys.stdout.flush()
 
 
@@ -109,7 +120,6 @@ def _check_imports():
     except BaseException:
         return "tg_provenance"
     return None
-
 
 
 def main():
@@ -128,7 +138,7 @@ def main():
             if not isinstance(data, dict):
                 raise ValueError
         except (ValueError, UnicodeDecodeError):
-            raise tg_core.GateError("malformed-input")
+            raise tg_core.GateError("malformed-input")  # noqa: B904 - the gate reports a fixed code, never the chained cause
         event = data.get("hook_event_name")
         tool = data.get("tool_name")
         if event == "UserPromptSubmit":

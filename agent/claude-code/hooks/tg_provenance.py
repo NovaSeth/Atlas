@@ -1,12 +1,14 @@
 """Human transcript evidence: fresh, session-bound and consumed once; imported only when needed."""
+
 import hashlib
 import json
 import os
 import re
 import time
+
 import tg_core
-import tg_state
 import tg_hooks
+import tg_state
 
 
 def _lines_reversed(real):
@@ -25,7 +27,7 @@ def _lines_reversed(real):
             if idx == -1:
                 carry.insert(0, chunk)
                 continue
-            line = chunk[idx + 1:] + b"".join(carry)
+            line = chunk[idx + 1 :] + b"".join(carry)
             if line:
                 yield line
             inner = chunk[:idx].split(b"\n")
@@ -48,8 +50,9 @@ def _human_content(c):
     """A prompt typed by a person: a string, or content blocks of text/image only (an attachment)."""
     if isinstance(c, str):
         return True
-    return (isinstance(c, list) and bool(c)
-            and all(isinstance(x, dict) and x.get("type") in ("text", "image") for x in c))
+    return (
+        isinstance(c, list) and bool(c) and all(isinstance(x, dict) and x.get("type") in ("text", "image") for x in c)
+    )
 
 
 def _content_text(c):
@@ -137,11 +140,11 @@ def _queued_evidence(d, att, line, prompt, after, used, absorbed, recent):
     if not (isinstance(prompt, str) and att.get("prompt") == prompt):
         return None
     did = att.get("delivery_id")
-    eid = "q:%s" % (did or att.get("source_uuid") or d.get("uuid")
-                    or hashlib.sha256(line).hexdigest()[:32])
+    eid = "q:%s" % (did or att.get("source_uuid") or d.get("uuid") or hashlib.sha256(line).hexdigest()[:32])
     ts = att.get("timestamp") or d.get("timestamp")
-    if not (_origin_kind(att) == "human" and att.get("humanTurn") is True
-            and att.get("commandMode", "prompt") == "prompt"):
+    if not (
+        _origin_kind(att) == "human" and att.get("humanTurn") is True and att.get("commandMode", "prompt") == "prompt"
+    ):
         return "other", None, None
     if eid in used or not _fresh(ts, after):
         return None
@@ -278,6 +281,6 @@ def resolve_pending_human(state, sid, event):
             state.update(pending_human=list(reversed(keep)))
         return
     ok = state.clear("p:" + verified["pid"])  # clear() also drops pending_human
-    tg_state.log(sid, event, "-", "clear" if ok else "keep",
-        "cleared-by-human-verified-deferred" if ok else "clear-failed")
-
+    tg_state.log(
+        sid, event, "-", "clear" if ok else "keep", "cleared-by-human-verified-deferred" if ok else "clear-failed"
+    )

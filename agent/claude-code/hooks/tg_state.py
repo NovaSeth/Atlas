@@ -1,10 +1,11 @@
 """Locked session state, persistent registries, optional configuration, logging and the switch."""
+
 import hashlib
 import json
 import os
 import re
-import tg_core
 
+import tg_core
 
 _CONFIG = None
 
@@ -27,7 +28,7 @@ def _config_problem(path, why):
         stamp = "?:%s" % why
     marker = os.path.join(os.environ.get("TAINT_STATE_DIR") or tg_core.STATE_DIR, "config-invalid")
     try:
-        with open(marker, "r", encoding="utf-8") as f:
+        with open(marker, encoding="utf-8") as f:
             if f.read(200) == stamp:
                 return
     except OSError:
@@ -52,7 +53,7 @@ def config():
     _CONFIG = empty
     path = os.environ.get("TAINT_CONFIG") or tg_core.CONFIG_PATH
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             raw = f.read(1 << 20)
     except OSError:
         return empty  # no config is the normal case
@@ -124,7 +125,7 @@ def artifact_paths():
         _ARTIFACTS = ()
         path = os.path.join(os.environ.get("TAINT_STATE_DIR") or tg_core.STATE_DIR, ARTIFACTS_FILE)
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 d = json.loads(f.read(4 << 20))
             if isinstance(d, dict) and isinstance(d.get("paths"), list):
                 _ARTIFACTS = tuple(x for x in d["paths"] if isinstance(x, str) and x.startswith("/"))
@@ -153,7 +154,7 @@ def latent_paths():
         _LATENT = ()
         path = os.path.join(os.environ.get("TAINT_STATE_DIR") or tg_core.STATE_DIR, LATENT_FILE)
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 d = json.loads(f.read(4 << 20))
             if isinstance(d, dict) and isinstance(d.get("paths"), list):
                 _LATENT = tuple(x for x in d["paths"] if isinstance(x, str) and x.startswith("/"))
@@ -227,17 +228,17 @@ class State:
     def load(self):
         self.flag = os.path.lexists(self.flag_path)
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, encoding="utf-8") as f:
                 raw = f.read(65536)
         except FileNotFoundError:
             self.data = {}
             return
         except OSError:
-            raise tg_core.GateError("state-corrupt")
+            raise tg_core.GateError("state-corrupt")  # noqa: B904 - fixed error code only
         try:
             d = json.loads(raw)
         except ValueError:
-            raise tg_core.GateError("state-corrupt")
+            raise tg_core.GateError("state-corrupt")  # noqa: B904 - fixed error code only
         if not isinstance(d, dict) or not isinstance(d.get("tainted"), bool):
             raise tg_core.GateError("state-corrupt")
         self.data = d
@@ -247,6 +248,7 @@ class State:
         if self.path is None or self.unknown == "state-dir":
             return self
         import fcntl
+
         fd = os.open(os.path.join(self.dir, ".lock"), os.O_RDWR | os.O_CREAT, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX)  # bounded by the internal deadline
         self._lock_fd = fd
@@ -430,13 +432,19 @@ class State:
         The evidence record that proved the human origin is consumed (it cannot clear a later taint)."""
         if self.path is None or self.unknown == "state-dir":
             return False
-        d = {k: v for k, v in self.data.items()
-             if k not in ("source", "since", "count", "marked_at", "pending_human", "format_unknown_at")} \
-            if self.unknown is None else {}
+        d = (
+            {
+                k: v
+                for k, v in self.data.items()
+                if k not in ("source", "since", "count", "marked_at", "pending_human", "format_unknown_at")
+            }
+            if self.unknown is None
+            else {}
+        )
         if evidence_id:
             used = [e for e in (d.get("used_evidence") or []) if isinstance(e, str)]
             used.append(evidence_id)
-            d["used_evidence"] = used[-tg_core.EVIDENCE_MAX:]
+            d["used_evidence"] = used[-tg_core.EVIDENCE_MAX :]
         d["tainted"] = False
         if not self._write(d):
             return False
@@ -453,8 +461,14 @@ class State:
 
 def log(session_id, event, tool, decision, reason):
     path = os.environ.get("TAINT_LOG") or tg_core.LOG_PATH
-    line = "%s %s %s %s %s %s\n" % (tg_core.now_iso(), safe_token(session_id, 8), safe_token(event, 20),
-                                    safe_token(tool, 80), decision, reason)
+    line = "%s %s %s %s %s %s\n" % (
+        tg_core.now_iso(),
+        safe_token(session_id, 8),
+        safe_token(event, 20),
+        safe_token(tool, 80),
+        decision,
+        reason,
+    )
     try:
         d = os.path.dirname(path)
         if d and not os.path.isdir(d):
@@ -476,5 +490,5 @@ def switch_on():
     except OSError:
         return False
     import stat as stat_mod
-    return stat_mod.S_ISREG(st.st_mode) and st.st_uid == 0
 
+    return stat_mod.S_ISREG(st.st_mode) and st.st_uid == 0

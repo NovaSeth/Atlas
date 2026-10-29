@@ -1,14 +1,28 @@
 #!/usr/bin/env python3
 """Operator docs match the shipped behaviour of the audit plan (items 1, 4, 5, 7-10, 14, 23)."""
+
 import re
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = {n: (ROOT / n).read_text() for n in ("README.md", "AGENTS.md", "docs/resident.md", "docs/configuration.md",
-                                            "agent/claude-code/skills/atlas-resident/SKILL.md")}
-NEW_ENV = ("SENTINEL_AGENT_SUDO_USERS", "SENTINEL_DIGEST_HOUR", "SENTINEL_SUDO_EXE", "SENTINEL_WAKE_MAX_PER_HOUR",
-           "SENTINEL_HEARTBEAT_URL")
+DOCS = {
+    n: (ROOT / n).read_text()
+    for n in (
+        "README.md",
+        "AGENTS.md",
+        "docs/resident.md",
+        "docs/configuration.md",
+        "agent/claude-code/skills/atlas-resident/SKILL.md",
+    )
+}
+NEW_ENV = (
+    "SENTINEL_AGENT_SUDO_USERS",
+    "SENTINEL_DIGEST_HOUR",
+    "SENTINEL_SUDO_EXE",
+    "SENTINEL_WAKE_MAX_PER_HOUR",
+    "SENTINEL_HEARTBEAT_URL",
+)
 
 
 class OperatorDocs(unittest.TestCase):

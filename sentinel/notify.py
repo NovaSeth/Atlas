@@ -9,6 +9,7 @@ written to <runtime>/outbox/ and delivered by the next escalation run (`notify.p
 Channels (same as the router): SENTINEL_NOTIFY_CMD called as <cmd> "<subject>" "<body>", otherwise
 `mail -s <subject> $SENTINEL_EMAIL` (SENTINEL_MAIL_CMD overrides `mail`).
 """
+
 import fcntl
 import json
 import os
@@ -61,17 +62,22 @@ def send(subject, body, timeout=NOTIFY_TIMEOUT):
     cmd = os.environ.get("SENTINEL_NOTIFY_CMD", "").strip()
     try:
         if cmd:
-            r = subprocess.run(shlex.split(cmd) + [subject, body], capture_output=True, text=True,
-                               timeout=timeout, env=env)
+            r = subprocess.run(
+                shlex.split(cmd) + [subject, body], capture_output=True, text=True, timeout=timeout, env=env
+            )
             return r.returncode == 0
         to = os.environ.get("SENTINEL_EMAIL", "").strip()
         if not to:
-            print("sentinel-router: no recipient configured (SENTINEL_EMAIL and SENTINEL_NOTIFY_CMD empty)",
-                  file=sys.stderr, flush=True)
+            print(
+                "sentinel-router: no recipient configured (SENTINEL_EMAIL and SENTINEL_NOTIFY_CMD empty)",
+                file=sys.stderr,
+                flush=True,
+            )
             return False
         mail = shlex.split(os.environ.get("SENTINEL_MAIL_CMD") or "mail")
-        r = subprocess.run(mail + ["-s", subject, to], input=body + "\n", capture_output=True, text=True,
-                           timeout=timeout, env=env)
+        r = subprocess.run(
+            mail + ["-s", subject, to], input=body + "\n", capture_output=True, text=True, timeout=timeout, env=env
+        )
         return r.returncode == 0
     except (OSError, ValueError, subprocess.SubprocessError):  # ValueError: unparsable command (shlex)
         return False
@@ -88,6 +94,7 @@ def _entries(box):
             return int(p.name.split("-", 1)[0])
         except ValueError:
             return 0
+
     return sorted(box.glob("*.json"), key=key)
 
 
@@ -183,8 +190,7 @@ def _deliver(files, result, end):
                 result["failed"] += 1
             continue
         left = end - time.monotonic()
-        if left <= 0 or not send(str(e.get("subject", "")), str(e.get("body", "")),
-                                 timeout=min(NOTIFY_TIMEOUT, left)):
+        if left <= 0 or not send(str(e.get("subject", "")), str(e.get("body", "")), timeout=min(NOTIFY_TIMEOUT, left)):
             result["failed"] += len(files) - i
             break
         try:

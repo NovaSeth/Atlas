@@ -3,6 +3,7 @@
 reporting UNKNOWN on failure, bless refusing, REPORT-TO-SEND ignored by git.
 Everything uses temp dirs, PATH stubs and env overrides; nothing mails, nothing touches production.
 """
+
 import importlib.util
 import io
 import json
@@ -14,7 +15,6 @@ import tempfile
 import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -73,10 +73,16 @@ class EscalationCase(TmpCase):
         self.write_stub("systemctl", "#!/bin/bash\nexit %d\n" % (0 if active else 3))
 
     def run_esc(self):
-        env = dict(os.environ, SENTINEL_ATLAS=str(self.atlas), SENTINEL_STATE=str(self.state),
-                   SENTINEL_EMAIL="nobody@example.com", SENTINEL_RESIDENT_SCREEN="agent", SENTINEL_RESIDENT_UNIT="agent.service",
-                   SENTINEL_STREAM_HEARTBEAT=str(self.stream_hb),
-                   PATH=f"{self.bin}:{os.environ['PATH']}")
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(self.atlas),
+            SENTINEL_STATE=str(self.state),
+            SENTINEL_EMAIL="nobody@example.com",
+            SENTINEL_RESIDENT_SCREEN="agent",
+            SENTINEL_RESIDENT_UNIT="agent.service",
+            SENTINEL_STREAM_HEARTBEAT=str(self.stream_hb),
+            PATH=f"{self.bin}:{os.environ['PATH']}",
+        )
         r = subprocess.run(["bash", str(ESC)], env=env, capture_output=True, text=True, timeout=60)
         return r
 
@@ -93,7 +99,7 @@ class TestThrottlePerKind(EscalationCase):
         r = self.run_esc()
         self.assertEqual(r.returncode, 1, r.stderr)
         self.assertEqual(self.mail_count(), 1)
-        self.set_unit(False)   # resident-dead appears while patrol-silent still stands
+        self.set_unit(False)  # resident-dead appears while patrol-silent still stands
         self.run_esc()
         self.assertEqual(self.mail_count(), 2)
 
@@ -110,11 +116,11 @@ class TestThrottlePerKind(EscalationCase):
         self.run_esc()
         self.assertTrue((self.state / "sent-patrol-silent").exists())
         self.assertTrue((self.state / "sent-resident-dead").exists())
-        self.set_unit(True)     # resident healthy, patrol still silent
+        self.set_unit(True)  # resident healthy, patrol still silent
         self.run_esc()
         self.assertTrue((self.state / "sent-patrol-silent").exists())
         self.assertFalse((self.state / "sent-resident-dead").exists())
-        self.assertEqual(self.mail_count(), 2)   # patrol-silent still suppressed
+        self.assertEqual(self.mail_count(), 2)  # patrol-silent still suppressed
 
     def test_healthy_then_again_mails(self):
         self.patrol_silent(True)
@@ -189,7 +195,8 @@ class TestPatrolEpisode(TmpCase):
             "    p=os.path.join(os.path.dirname(os.path.abspath(__file__)),'stub-out')\n"
             "    t=open(p).read() if os.path.exists(p) else ''\n"
             "    print(t,end='')\n"
-            "    sys.exit(1 if t else 0)\n")
+            "    sys.exit(1 if t else 0)\n"
+        )
         for n, body in (("jobs.sh", "exit 0\n"),):
             (self.dir / n).write_text("#!/bin/bash\n" + body)
             (self.dir / n).chmod(0o755)
@@ -205,8 +212,13 @@ class TestPatrolEpisode(TmpCase):
             p.write_text(out)
         elif p.exists():
             p.unlink()
-        return subprocess.run(["bash", str(self.dir / "patrol.sh")], env=dict(os.environ, PATROL_NICE="1"),
-                              capture_output=True, text=True, timeout=60)
+        return subprocess.run(
+            ["bash", str(self.dir / "patrol.sh")],
+            env=dict(os.environ, PATROL_NICE="1"),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
 
     def test_episode_start_survives_body_change_and_resets_on_clean(self):
         self.patrol("disk 91%\n")
@@ -236,14 +248,25 @@ class TestAtlasUnknown(TmpCase):
 
     def patch(self, fake):
         self.a.run_checked = fake
-        self.a.have = lambda tool: True   # pretend docker/ufw/certbot are installed: their failure counts
+        self.a.have = lambda tool: True  # pretend docker/ufw/certbot are installed: their failure counts
         self.a.run = lambda cmd, timeout=25: ""
         self.a.MEAS_ERRORS.clear()
 
     def test_failing_collectors_record_errors(self):
         self.patch(lambda cmd, timeout=25: self.FAIL)
-        for name in ("services", "timers", "listeners", "containers", "sudoers", "vhosts",
-                     "crontabs", "packages", "setuid", "firewall", "sensitive_files"):
+        for name in (
+            "services",
+            "timers",
+            "listeners",
+            "containers",
+            "sudoers",
+            "vhosts",
+            "crontabs",
+            "packages",
+            "setuid",
+            "firewall",
+            "sensitive_files",
+        ):
             self.a.MEAS_ERRORS.clear()
             try:
                 getattr(self.a, name)()
@@ -281,8 +304,12 @@ class TestAtlasUnknown(TmpCase):
 
 class TestGitignore(unittest.TestCase):
     def test_report_to_send_ignored(self):
-        r = subprocess.run(["git", "check-ignore", "atlas/REPORT-TO-SEND", "atlas/ALERT.since"], cwd=ROOT,
-                           capture_output=True, text=True)
+        r = subprocess.run(
+            ["git", "check-ignore", "atlas/REPORT-TO-SEND", "atlas/ALERT.since"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
         self.assertEqual(sorted(r.stdout.split()), ["atlas/ALERT.since", "atlas/REPORT-TO-SEND"])
 
 
@@ -361,7 +388,9 @@ class TestBlessRefusesAnyUnknown(TmpCase):
         self.assertEqual(json.loads(Path(self.a.BASELINE).read_text()), {"old": 1})
 
     def test_silent_unknown_refuses(self):
-        rc, err = self.bless({"certs_error": "", "measure_errors": {}, "silent_unknown": {"u.service": "journalctl rc=1"}})
+        rc, err = self.bless(
+            {"certs_error": "", "measure_errors": {}, "silent_unknown": {"u.service": "journalctl rc=1"}}
+        )
         self.assertNotEqual(rc, 0)
         self.assertIn("u.service", err)
         self.assertEqual(json.loads(Path(self.a.BASELINE).read_text()), {"old": 1})

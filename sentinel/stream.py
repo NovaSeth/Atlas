@@ -18,6 +18,7 @@ SENTINEL_STATE_DIR, SENTINEL_JOURNAL_CMD, SENTINEL_WEB_CMD, SENTINEL_UNREADABLE_
 SENTINEL_RESTART_DELAY, SENTINEL_STABLE_SECS, SENTINEL_HEARTBEAT_SECS, SENTINEL_WATCHDOG_SECS,
 plus the bus/router variables.
 """
+
 import functools
 import hashlib
 import ipaddress
@@ -41,8 +42,9 @@ import envfile  # noqa: E402
 envfile.load(os.environ.get("SENTINEL_ATLAS") or Path(__file__).resolve().parent.parent / "atlas")
 import bus  # noqa: E402
 import router  # noqa: E402
-from i18n import t  # noqa: E402
 from untrusted import clean, quote, suspicious  # noqa: E402
+
+from i18n import t  # noqa: E402
 
 # 60 s heartbeat: escalation treats > 5 min of silence as a problem, so 5 beats may be missed.
 DEFAULT_HEARTBEAT_SECS = 60
@@ -64,8 +66,11 @@ PATH_DIGEST_LEN = 12
 # Only these journal fields are requested: smaller JSON, less parsing on 1 vCPU.
 JOURNAL_FIELDS = "MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_PID,UNIT,_TRANSPORT,_UID,_EXE,_COMM"
 # `+` is journalctl's OR between match groups: the kernel ring, PID 1, sudo and ssh.service only.
-JOURNAL_CMD = ("journalctl -f -o json -n 0 --output-fields=" + JOURNAL_FIELDS +
-               " _SYSTEMD_UNIT=ssh.service + SYSLOG_IDENTIFIER=sudo + _PID=1 + _TRANSPORT=kernel")
+JOURNAL_CMD = (
+    "journalctl -f -o json -n 0 --output-fields="
+    + JOURNAL_FIELDS
+    + " _SYSTEMD_UNIT=ssh.service + SYSLOG_IDENTIFIER=sudo + _PID=1 + _TRANSPORT=kernel"
+)
 WEB_LOG_DEFAULT = "/var/log/apache2/sentinel-sensitive.log"
 
 # Untrusted text (request paths, user names, command lines, process names) enters `what` and
@@ -76,14 +81,29 @@ USER_LIMIT = 32
 COMMAND_WHAT_LIMIT = 120
 COMMAND_EVIDENCE_LIMIT = 500
 PROCESS_LIMIT = 32
-IP_LIMIT = 45            # the longest textual IPv6 address
+IP_LIMIT = 45  # the longest textual IPv6 address
 SUSPECT_SAMPLE = 40
 SUSPECT_SENSOR = "input.injection-suspect"
 FORGED_SENSOR = "auth.sudo.forged"
 LIMITED_SENSORS = frozenset({SUSPECT_SENSOR, FORGED_SENSOR})
 FORGED_UID_LIMIT = 12
-ATLAS_MEASURE_EXES = frozenset({"ss", "sha256sum", "ls", "test", "find", "certbot", "ufw",
-                                "fail2ban-client", "docker", "journalctl", "cat", "ssh-keygen", "crontab"})
+ATLAS_MEASURE_EXES = frozenset(
+    {
+        "ss",
+        "sha256sum",
+        "ls",
+        "test",
+        "find",
+        "certbot",
+        "ufw",
+        "fail2ban-client",
+        "docker",
+        "journalctl",
+        "cat",
+        "ssh-keygen",
+        "crontab",
+    }
+)
 METHOD_LIMIT = 16
 SSH_METHOD_LIMIT = 32
 SUDO_REASON_LIMIT = 80
@@ -91,8 +111,28 @@ SUDO_EXE_LIMIT = 64
 VHOST_LIMIT = 80
 UNIT_WHAT_LIMIT = 200
 UNIT_EVIDENCE_LIMIT = 300
-KNOWN_METHODS = frozenset(("GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "TRACE", "CONNECT",
-                           "PROPFIND", "PROPPATCH", "MKCOL", "COPY", "MOVE", "LOCK", "UNLOCK", "REPORT", "SEARCH"))
+KNOWN_METHODS = frozenset(
+    (
+        "GET",
+        "HEAD",
+        "POST",
+        "PUT",
+        "DELETE",
+        "OPTIONS",
+        "PATCH",
+        "TRACE",
+        "CONNECT",
+        "PROPFIND",
+        "PROPPATCH",
+        "MKCOL",
+        "COPY",
+        "MOVE",
+        "LOCK",
+        "UNLOCK",
+        "REPORT",
+        "SEARCH",
+    )
+)
 # Suspect and forged sudo warnings can be attacker-driven, and bus dedup happens only on the
 # reading side: without a limit, a scanner could fill the bus. At most one warning per suspect
 # fingerprint per 10 minutes and 30 per hour overall; the rest is counted and reported once an hour.
@@ -187,8 +227,15 @@ def _norm_ip(s):
 
 
 def _ev(sensor, severity, what, fingerprint, evidence, command, message=None, confidence="measured"):
-    ev = {"sensor": sensor, "severity": severity, "confidence": confidence, "what": what,
-          "evidence": evidence, "command": command, "fingerprint": bus.sanitize_fp(fingerprint)}
+    ev = {
+        "sensor": sensor,
+        "severity": severity,
+        "confidence": confidence,
+        "what": what,
+        "evidence": evidence,
+        "command": command,
+        "fingerprint": bus.sanitize_fp(fingerprint),
+    }
     if message:
         ev["message"] = message
     return ev
@@ -199,11 +246,16 @@ class SuspectLimiter:
     filter(events) passes every other event unchanged; flush() returns the hourly summary of what was
     suppressed (at most one per window). Thread-safe: the journal and web followers share one."""
 
-    def __init__(self, per_fp_secs=SUSPECT_PER_FP_SECS, max_per_hour=SUSPECT_MAX_PER_HOUR,
-                 window_secs=SUSPECT_WINDOW_SECS, clock=time.monotonic):
+    def __init__(
+        self,
+        per_fp_secs=SUSPECT_PER_FP_SECS,
+        max_per_hour=SUSPECT_MAX_PER_HOUR,
+        window_secs=SUSPECT_WINDOW_SECS,
+        clock=time.monotonic,
+    ):
         self.per_fp, self.max, self.window, self.clock = per_fp_secs, max_per_hour, window_secs, clock
         self.lock = threading.Lock()
-        self.last = {}            # fingerprint -> time last let through
+        self.last = {}  # fingerprint -> time last let through
         self.window_start = None
         self.count = 0
         self.suppressed = 0
@@ -213,11 +265,21 @@ class SuspectLimiter:
         out = []
         if self.window_start is not None and now - self.window_start >= self.window:
             if self.suppressed:
-                out.append(_ev(SUSPECT_SENSOR, "warning", "suspect events suppressed: %d" % self.suppressed,
-                               SUSPECT_SENSOR + ":suppressed",
-                               {"suppressed": self.suppressed, "window_seconds": int(self.window),
-                                "per_fingerprint_seconds": int(self.per_fp), "max_per_window": self.max},
-                               "grep input.injection-suspect <state>/events.jsonl | tail"))
+                out.append(
+                    _ev(
+                        SUSPECT_SENSOR,
+                        "warning",
+                        "suspect events suppressed: %d" % self.suppressed,
+                        SUSPECT_SENSOR + ":suppressed",
+                        {
+                            "suppressed": self.suppressed,
+                            "window_seconds": int(self.window),
+                            "per_fingerprint_seconds": int(self.per_fp),
+                            "max_per_window": self.max,
+                        },
+                        "grep input.injection-suspect <state>/events.jsonl | tail",
+                    )
+                )
             self.window_start, self.count, self.suppressed = None, 0, 0
             self.last = {fp: t for fp, t in self.last.items() if now - t < self.per_fp}
         return out
@@ -253,11 +315,16 @@ def _suspects(sensor, field, raw, source, command):
     rules = suspicious(raw)
     if not rules:
         return []
-    return [_ev(SUSPECT_SENSOR, "warning",
-                "instruction-like text in %s from %s: %s" % (field, source, ",".join(rules)),
-                "%s:%s:%s:%s" % (SUSPECT_SENSOR, sensor, field, rules[0]),
-                {"field": field, "source": source, "rules": rules, "sample": clean(raw, SUSPECT_SAMPLE)},
-                command)]
+    return [
+        _ev(
+            SUSPECT_SENSOR,
+            "warning",
+            "instruction-like text in %s from %s: %s" % (field, source, ",".join(rules)),
+            "%s:%s:%s:%s" % (SUSPECT_SENSOR, sensor, field, rules[0]),
+            {"field": field, "source": source, "rules": rules, "sample": clean(raw, SUSPECT_SAMPLE)},
+            command,
+        )
+    ]
 
 
 _SSH_RE = re.compile(r"^Accepted (\S+) for (\S+) from (\S+)")
@@ -283,10 +350,15 @@ def _ssh_event(entry, msg, known_ips_path=None):
     known = _norm_ip(ip_raw) in load_known_ips(known_ips_path or known_ips_default())
     fp = "auth.ssh.accepted-login:%s@%s" % (user, ip.replace(":", "_"))
     cmd = "journalctl -u ssh --since -1h | grep 'Accepted '"
-    ev = _ev("auth.ssh.accepted-login", "info" if known else "critical",
-             "SSH login by %s from %s IP %s (%s)" % (quote(user_raw, USER_LIMIT),
-                                                     "known" if known else "UNKNOWN", ip, method),
-             fp, {"user": user, "ip": ip, "method": method, "known_ip": known}, cmd)
+    ev = _ev(
+        "auth.ssh.accepted-login",
+        "info" if known else "critical",
+        "SSH login by %s from %s IP %s (%s)"
+        % (quote(user_raw, USER_LIMIT), "known" if known else "UNKNOWN", ip, method),
+        fp,
+        {"user": user, "ip": ip, "method": method, "known_ip": known},
+        cmd,
+    )
     if not known:
         ev["message"] = t("stream.ssh_unknown", user=quote(user_raw, USER_LIMIT), ip=ip)
     return [ev] + _suspects(ev["sensor"], "user", user_raw, ip, cmd)
@@ -294,18 +366,30 @@ def _ssh_event(entry, msg, known_ips_path=None):
 
 def _forged_sudo_event(entry, sender):
     uid = clean(entry.get("_UID", ""), FORGED_UID_LIMIT)
-    return [_ev(FORGED_SENSOR, "warning",
-                "forged sudo log line rejected (sender uid %s: %s)" % (uid, sender),
-                "auth.sudo.forged:uid%s:%s" % (uid, sender),
-                {"uid": uid, "reason": sender}, "journalctl -t sudo --since -1h")]
+    return [
+        _ev(
+            FORGED_SENSOR,
+            "warning",
+            "forged sudo log line rejected (sender uid %s: %s)" % (uid, sender),
+            "auth.sudo.forged:uid%s:%s" % (uid, sender),
+            {"uid": uid, "reason": sender},
+            "journalctl -t sudo --since -1h",
+        )
+    ]
 
 
 def _is_atlas_measuring(user_raw, reason, exe, fields):
     """The Atlas user running its allowlisted read-only commands (~300 per patrol): not news."""
     me = self_user()
     cwd = next((f.strip()[4:] for f in fields.split(";") if f.strip().startswith("PWD=")), None)
-    return bool(not reason and user_raw == me and me != "root" and exe in ATLAS_MEASURE_EXES
-                and cwd is not None and os.path.realpath(cwd) == os.path.realpath(bus.atlas_dir()))
+    return bool(
+        not reason
+        and user_raw == me
+        and me != "root"
+        and exe in ATLAS_MEASURE_EXES
+        and cwd is not None
+        and os.path.realpath(cwd) == os.path.realpath(bus.atlas_dir())
+    )
 
 
 def _sudo_event(entry, msg):
@@ -327,8 +411,11 @@ def _sudo_event(entry, msg):
         return []
     agent = user_raw in agent_sudo_users() and not reason
     trusted = (agent or user_raw in trusted_sudo_users()) and not reason
-    what = "sudo by %s%s: %s" % (quote(user_raw, USER_LIMIT), " (%s)" % reason if reason else "",
-                                 quote(cmd_raw, COMMAND_WHAT_LIMIT))
+    what = "sudo by %s%s: %s" % (
+        quote(user_raw, USER_LIMIT),
+        " (%s)" % reason if reason else "",
+        quote(cmd_raw, COMMAND_WHAT_LIMIT),
+    )
     evidence = {"user": user, "command": clean(cmd_raw, COMMAND_EVIDENCE_LIMIT)}
     if sender == "ok-exe-missing":
         evidence["exe"] = "missing"
@@ -337,11 +424,16 @@ def _sudo_event(entry, msg):
     if reason:
         evidence["reason"] = reason
     hint = "journalctl -t sudo --since -1h"
-    ev = _ev("auth.sudo.command", "info" if trusted else "alert",
-             what, "auth.sudo.command:%s:%s" % (user, exe), evidence, hint)
+    ev = _ev(
+        "auth.sudo.command",
+        "info" if trusted else "alert",
+        what,
+        "auth.sudo.command:%s:%s" % (user, exe),
+        evidence,
+        hint,
+    )
     if not trusted:
-        ev["message"] = t("stream.sudo", user=quote(user_raw, USER_LIMIT),
-                          command=quote(cmd_raw, COMMAND_WHAT_LIMIT))
+        ev["message"] = t("stream.sudo", user=quote(user_raw, USER_LIMIT), command=quote(cmd_raw, COMMAND_WHAT_LIMIT))
     return [ev] + _suspects(ev["sensor"], "command", cmd_raw, user, hint)
 
 
@@ -354,10 +446,17 @@ def _unit_failed_event(entry, msg):
     if not isinstance(unit, str):
         m = _FAILED_RE.match(msg)
         unit = m.group(1) if m else "unknown-unit"
-    return [_ev("systemd.unit-failed", "alert", "unit %s failed: %s" % (unit, msg[:UNIT_WHAT_LIMIT]),
-                "systemd.unit-failed:%s" % unit, {"unit": unit, "message": msg[:UNIT_EVIDENCE_LIMIT]},
-                "systemctl status --lines=0 --no-pager %s" % shlex.quote(unit),
-                message=t("stream.unit_failed", unit=unit))]
+    return [
+        _ev(
+            "systemd.unit-failed",
+            "alert",
+            "unit %s failed: %s" % (unit, msg[:UNIT_WHAT_LIMIT]),
+            "systemd.unit-failed:%s" % unit,
+            {"unit": unit, "message": msg[:UNIT_EVIDENCE_LIMIT]},
+            "systemctl status --lines=0 --no-pager %s" % shlex.quote(unit),
+            message=t("stream.unit_failed", unit=unit),
+        )
+    ]
 
 
 def _oom_event(entry, msg):
@@ -371,10 +470,15 @@ def _oom_event(entry, msg):
     pid, name_raw = m.groups()
     name = clean(name_raw, PROCESS_LIMIT)
     hint = "journalctl -k --since -1h | grep 'Out of memory'"
-    ev = _ev("kernel.oom-kill", "alert",
-             "OOM killer killed %s (pid %s)" % (quote(name_raw, PROCESS_LIMIT), pid),
-             "kernel.oom-kill:%s" % name, {"process": name, "pid": pid}, hint,
-             message=t("stream.oom", name=quote(name_raw, PROCESS_LIMIT)))
+    ev = _ev(
+        "kernel.oom-kill",
+        "alert",
+        "OOM killer killed %s (pid %s)" % (quote(name_raw, PROCESS_LIMIT), pid),
+        "kernel.oom-kill:%s" % name,
+        {"process": name, "pid": pid},
+        hint,
+        message=t("stream.oom", name=quote(name_raw, PROCESS_LIMIT)),
+    )
     return [ev] + _suspects(ev["sensor"], "process", name_raw, "kernel", hint)
 
 
@@ -386,8 +490,12 @@ def journal_events(entry, known_ips_path=None):
     msg = entry.get("MESSAGE")
     if not isinstance(msg, str):
         return []
-    for handler in (lambda: _ssh_event(entry, msg, known_ips_path), lambda: _sudo_event(entry, msg),
-                    lambda: _unit_failed_event(entry, msg), lambda: _oom_event(entry, msg)):
+    for handler in (
+        lambda: _ssh_event(entry, msg, known_ips_path),
+        lambda: _sudo_event(entry, msg),
+        lambda: _unit_failed_event(entry, msg),
+        lambda: _oom_event(entry, msg),
+    ):
         events = handler()
         if events is not None:
             return events
@@ -412,7 +520,7 @@ def web_events(line):
         return []
     status, nbytes, method_raw, path = int(m.group(1)), int(m.group(2)), m.group(3), m.group(4)
     method = clean(method_raw, METHOD_LIMIT)
-    prefix = line[:m.start()].split()
+    prefix = line[: m.start()].split()
     # %v (the configured ServerName) and %a (the peer address) are not client text; cleaned anyway
     vhost = clean(prefix[1], VHOST_LIMIT) if len(prefix) >= 3 else "-"
     ip = clean(prefix[2], IP_LIMIT) if len(prefix) >= 3 else "-"
@@ -422,8 +530,10 @@ def web_events(line):
     # (two leaks sharing a prefix must not dedup into one), so it carries a digest of the full path.
     # Letters only (hex nibble -> a..p): a digit run would look like an epoch to the bus fingerprint sanitizer
     # and be replaced, which would merge distinct paths again.
-    digest = "".join("abcdefghijklmnop"[int(c, 16)]
-                     for c in hashlib.sha256(path_raw.encode("utf-8", "surrogateescape")).hexdigest()[:PATH_DIGEST_LEN])
+    digest = "".join(
+        "abcdefghijklmnop"[int(c, 16)]
+        for c in hashlib.sha256(path_raw.encode("utf-8", "surrogateescape")).hexdigest()[:PATH_DIGEST_LEN]
+    )
     # grep needs a literal prefix of the logged path, not the "..." of a shortened one
     grep_key = clean(path_raw, len(path_raw) + 1)[:PATH_LIMIT]
     if 200 <= status < 300:
@@ -433,18 +543,19 @@ def web_events(line):
     else:
         sev, klass = "info", "other"
     hint = "grep -F %s %s" % (shlex.quote(grep_key), WEB_LOG_DEFAULT)
-    ev = _ev("web.sensitive-hit", sev,
-             "%s %s -> %d (%d body bytes) on %s from %s" % (method, quote(path_raw, PATH_LIMIT), status, nbytes,
-                                                            vhost, ip),
-             "web.sensitive-hit:%s:%s#%s:%s" % (vhost, path_c, digest, klass),
-             {"vhost": vhost, "ip": ip, "status": status, "bytes": nbytes, "path": path_c},
-             hint)
+    ev = _ev(
+        "web.sensitive-hit",
+        sev,
+        "%s %s -> %d (%d body bytes) on %s from %s" % (method, quote(path_raw, PATH_LIMIT), status, nbytes, vhost, ip),
+        "web.sensitive-hit:%s:%s#%s:%s" % (vhost, path_c, digest, klass),
+        {"vhost": vhost, "ip": ip, "status": status, "bytes": nbytes, "path": path_c},
+        hint,
+    )
     if sev == "critical":
-        ev["message"] = t("stream.web_leak", path=quote(path_raw, PATH_LIMIT), status=status, bytes=nbytes,
-                          vhost=vhost)
+        ev["message"] = t("stream.web_leak", path=quote(path_raw, PATH_LIMIT), status=status, bytes=nbytes, vhost=vhost)
     # the full request target, query included: an injection can live in the query string too
     extra = _suspects(ev["sensor"], "path", path, ip, hint)
-    if method_raw not in KNOWN_METHODS:   # an invented method is client text too
+    if method_raw not in KNOWN_METHODS:  # an invented method is client text too
         extra += _suspects(ev["sensor"], "method", method_raw, ip, hint)
     return [ev] + extra
 
@@ -479,8 +590,9 @@ class Source(threading.Thread):
                 self.stop_evt.wait(delay)
                 continue
             try:
-                self.proc = subprocess.Popen(self.cmd_fn(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                             text=True, errors="replace")
+                self.proc = subprocess.Popen(
+                    self.cmd_fn(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, errors="replace"
+                )
             except OSError as e:
                 print("sentinel-stream: %s: cannot start: %s" % (self.src_name, e), file=sys.stderr, flush=True)
                 self._fail()
@@ -499,7 +611,8 @@ class Source(threading.Thread):
                 pass
             self.terminate()
             if self.up_since is not None and time.monotonic() - self.up_since >= _env_num(
-                    "SENTINEL_STABLE_SECS", DEFAULT_STABLE_SECS):
+                "SENTINEL_STABLE_SECS", DEFAULT_STABLE_SECS
+            ):
                 self.fail_since = None  # it ran fine for a while, then ended: a fresh outage clock
             self._fail()
             self.stop_evt.wait(delay)
@@ -524,20 +637,28 @@ class Source(threading.Thread):
         readable = self.readable()
         if not readable and self.fail_since is None:
             self.fail_since = now  # live tail on a vanished/unreadable file: the outage starts here
-        if readable and self.up_since is not None and self.proc and self.proc.poll() is None and \
-                now - self.up_since >= _env_num("SENTINEL_STABLE_SECS", DEFAULT_STABLE_SECS):
+        if (
+            readable
+            and self.up_since is not None
+            and self.proc
+            and self.proc.poll() is None
+            and now - self.up_since >= _env_num("SENTINEL_STABLE_SECS", DEFAULT_STABLE_SECS)
+        ):
             self.fail_since = None
             self.alerted = False
             return None
         if self.fail_since is not None and not self.alerted and now - self.fail_since >= unreadable_secs:
             self.alerted = True
-            return _ev("stream.source-unreadable", "alert",
-                       "stream source '%s' unreadable for over %d s" % (self.src_name, unreadable_secs),
-                       "stream.source-unreadable:%s" % self.src_name,
-                       {"source": self.src_name, "seconds": int(now - self.fail_since)},
-                       "systemctl status --lines=0 --no-pager sentinel-stream",
-                       message=t("stream.source_unreadable", source=self.src_name, seconds=int(unreadable_secs)),
-                       confidence="unknown")
+            return _ev(
+                "stream.source-unreadable",
+                "alert",
+                "stream source '%s' unreadable for over %d s" % (self.src_name, unreadable_secs),
+                "stream.source-unreadable:%s" % self.src_name,
+                {"source": self.src_name, "seconds": int(now - self.fail_since)},
+                "systemctl status --lines=0 --no-pager sentinel-stream",
+                message=t("stream.source_unreadable", source=self.src_name, seconds=int(unreadable_secs)),
+                confidence="unknown",
+            )
         return None
 
 
@@ -576,6 +697,7 @@ def router_loop(stop, ready):
 
 def _make_sources(stop, limiter, known, web_log):
     """The two followers: journal and web, both feeding the bus through the shared limiter."""
+
     def on_journal(line):
         try:
             entry = json.loads(line)
@@ -590,12 +712,15 @@ def _make_sources(stop, limiter, known, web_log):
 
     web_cmd_env = os.environ.get("SENTINEL_WEB_CMD")
     return [
-        Source("journal", lambda: shlex.split(os.environ.get("SENTINEL_JOURNAL_CMD") or JOURNAL_CMD),
-               on_journal, stop),
-        Source("web", lambda: shlex.split(web_cmd_env or "tail -n 0 -F %s" % shlex.quote(web_log)),
-               on_web, stop,
-               # tail -F happily waits for a file that never appears: check readability ourselves
-               readable=(lambda: True) if web_cmd_env else (lambda: os.access(web_log, os.R_OK))),
+        Source("journal", lambda: shlex.split(os.environ.get("SENTINEL_JOURNAL_CMD") or JOURNAL_CMD), on_journal, stop),
+        Source(
+            "web",
+            lambda: shlex.split(web_cmd_env or "tail -n 0 -F %s" % shlex.quote(web_log)),
+            on_web,
+            stop,
+            # tail -F happily waits for a file that never appears: check readability ourselves
+            readable=(lambda: True) if web_cmd_env else (lambda: os.access(web_log, os.R_OK)),
+        ),
     ]
 
 
@@ -609,7 +734,7 @@ def _tick(rt, sources, limiter, unreadable, beat, now):
         ev = s.check_health(unreadable)
         if ev:
             emit_safe(ev)
-    for ev in limiter.flush():   # the hourly "suppressed" summary even when no new event arrives
+    for ev in limiter.flush():  # the hourly "suppressed" summary even when no new event arrives
         emit_safe(ev)
     if alive and now - beat["last_hb"] >= beat["hb_secs"]:
         try:
@@ -633,9 +758,13 @@ def main():
     except bus.UnsafeStateDir as e:
         print("sentinel-stream: unsafe runtime directory %s (%s)" % (state, e.code), file=sys.stderr, flush=True)
         return 3
-    beat = {"heartbeat": state / "stream.heartbeat", "last_hb": 0.0, "last_wd": 0.0,
-            "hb_secs": _env_num("SENTINEL_HEARTBEAT_SECS", DEFAULT_HEARTBEAT_SECS),
-            "wd_secs": _env_num("SENTINEL_WATCHDOG_SECS", DEFAULT_WATCHDOG_SECS)}
+    beat = {
+        "heartbeat": state / "stream.heartbeat",
+        "last_hb": 0.0,
+        "last_wd": 0.0,
+        "hb_secs": _env_num("SENTINEL_HEARTBEAT_SECS", DEFAULT_HEARTBEAT_SECS),
+        "wd_secs": _env_num("SENTINEL_WATCHDOG_SECS", DEFAULT_WATCHDOG_SECS),
+    }
     unreadable = _env_num("SENTINEL_UNREADABLE_SECS", DEFAULT_UNREADABLE_SECS)
     web_log = os.environ.get("SENTINEL_WEB_LOG") or WEB_LOG_DEFAULT
     limiter = SuspectLimiter()

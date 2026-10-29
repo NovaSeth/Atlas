@@ -9,6 +9,7 @@ to English, and a key missing everywhere prints as the key itself, so a gap is v
     i18n.py <key> name=value ...                    from a shell (one message)
     i18n.py --dump                                  key NUL value NUL ... (bash loads the catalog once)
 """
+
 import json
 import os
 import sys

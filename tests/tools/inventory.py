@@ -11,6 +11,7 @@ Rule, for every function, class and method in test files (`*/tests/*.py`, `tests
     its own lines, not those of its methods)              -> weakened
 Entries in allowed-test-edits.txt (`path::qualname  # P-id`) are skipped. Exit 2 (message on stderr) on a usage, git or parse error.
 """
+
 import argparse
 import ast
 import fnmatch
@@ -45,7 +46,9 @@ def definitions(source, path):
             qual = prefix + node.name
             first = min([node.lineno] + [d.lineno for d in node.decorator_list])
             if isinstance(node, ast.ClassDef):
-                children = [c for c in node.body if isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+                children = [
+                    c for c in node.body if isinstance(c, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                ]
                 own = ast.dump(ast.Module([c for c in node.body if c not in children], []))
                 own += ast.dump(ast.Tuple(node.bases + node.decorator_list, ast.Load()))
                 spans, cur = [], first
@@ -64,7 +67,7 @@ def definitions(source, path):
     try:
         tree = ast.parse(source, path)
     except SyntaxError as exc:
-        raise SystemExit("inventory: %s does not parse: %s" % (path, exc))
+        raise SystemExit("inventory: %s does not parse: %s" % (path, exc))  # noqa: B904 - a one-line CLI message
     walk(tree.body, "")
     return out
 

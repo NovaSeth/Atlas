@@ -668,7 +668,7 @@ shell script and an installer dry run: [.github/workflows/tests.yml](.github/wor
 
 ## Contributing
 
-- Commit subjects follow Conventional Commits: `type(scope): summary` with `feat`, `fix`, `docs`, `test`, `refactor`,
+- Commit subjects follow Conventional Commits: `type(scope): summary` with `feat`, `fix`, `docs`, `style`, `test`, `refactor`,
   `perf`, `build`, `ci`, `chore` or `revert`. CI checks every non-merge commit
   (`bash .github/check-commits.sh <base> HEAD` does the same locally).
 - Write the test first and watch it fail for the stated reason. Product code is standard library only; `ruff`,

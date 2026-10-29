@@ -6,8 +6,8 @@ import threading
 import time
 import unittest
 
+# helpers puts sentinel/ on sys.path: it must be imported before the modules below
 from helpers import SENTINEL, make_event, read_bus, tmpdir, wait_for
-
 import bus  # noqa: E402
 
 BUS_PY = SENTINEL / "bus.py"
@@ -16,16 +16,18 @@ BUS_PY = SENTINEL / "bus.py"
 class BusBase(unittest.TestCase):
     def setUp(self):
         self.d = tmpdir(self)
-        self.env = dict(os.environ, SENTINEL_BUS=str(self.d / "events.jsonl"),
-                        SENTINEL_BUS_LOCK=str(self.d / "events.lock"))
+        self.env = dict(
+            os.environ, SENTINEL_BUS=str(self.d / "events.jsonl"), SENTINEL_BUS_LOCK=str(self.d / "events.lock")
+        )
         for k, v in self.env.items():
             if k.startswith("SENTINEL_"):
                 os.environ[k] = v
                 self.addCleanup(os.environ.pop, k, None)
 
     def cli(self, *args):
-        return subprocess.run([sys.executable, str(BUS_PY), *args], env=self.env,
-                              capture_output=True, text=True, timeout=20)
+        return subprocess.run(
+            [sys.executable, str(BUS_PY), *args], env=self.env, capture_output=True, text=True, timeout=20
+        )
 
 
 class EmitTests(BusBase):
@@ -70,9 +72,13 @@ class EmitTests(BusBase):
         self.assertEqual(r.returncode, 2)
 
     def test_concurrent_emits_do_not_interleave(self):
-        procs = [subprocess.Popen([sys.executable, str(BUS_PY), "emit", "--json",
-                                   json.dumps(make_event(fingerprint="c:%d" % i))],
-                                  env=self.env) for i in range(12)]
+        procs = [
+            subprocess.Popen(
+                [sys.executable, str(BUS_PY), "emit", "--json", json.dumps(make_event(fingerprint="c:%d" % i))],
+                env=self.env,
+            )
+            for i in range(12)
+        ]
         for p in procs:
             self.assertEqual(p.wait(timeout=20), 0)
         self.assertEqual(len(read_bus(self.d / "events.jsonl")), 12)
@@ -94,6 +100,7 @@ class FollowTests(BusBase):
         def run():
             for ev in bus.follow_events(stop=stop.is_set, poll=0.05, **kw):
                 got.append(ev)
+
         t = threading.Thread(target=run, daemon=True)
         t.start()
         self.addCleanup(t.join, 5)
@@ -132,9 +139,12 @@ class FollowTests(BusBase):
         self.assertEqual(got[0]["fingerprint"], "old:1")
 
     def test_cli_follow_dedup_min_severity_and_new_fingerprint(self):
-        p = subprocess.Popen([sys.executable, str(BUS_PY), "follow", "--min-severity", "alert",
-                              "--dedup-seconds", "3600", "--from-end"], env=self.env,
-                             stdout=subprocess.PIPE, text=True)
+        p = subprocess.Popen(
+            [sys.executable, str(BUS_PY), "follow", "--min-severity", "alert", "--dedup-seconds", "3600", "--from-end"],
+            env=self.env,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
         self.addCleanup(p.kill)
         time.sleep(0.8)
         bus.emit(make_event(fingerprint="dup:1", what="first"))

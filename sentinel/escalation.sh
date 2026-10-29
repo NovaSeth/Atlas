@@ -24,7 +24,7 @@ set -uo pipefail
 # not a safeguard. Every path can be redirected to a temp dir and every command to a stub.
 SDIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ATLAS=${SENTINEL_ATLAS:-$SDIR/../atlas}
-# shellcheck source=../atlas/lib.sh
+# shellcheck source-path=SCRIPTDIR source=../atlas/lib.sh
 . "$SDIR/../atlas/lib.sh"
 atlas_load_env "$ATLAS"
 HUMAN=${SENTINEL_EMAIL:-}

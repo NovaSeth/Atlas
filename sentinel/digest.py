@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Daily digest of agent actions, delivered through the notifier outbox."""
+
 import argparse
 import json
 import sys

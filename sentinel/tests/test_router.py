@@ -2,8 +2,8 @@ import os
 import unittest
 from unittest import mock
 
+# helpers puts sentinel/ on sys.path: it must be imported before the modules below
 from helpers import make_event, notify_calls, stub_notify, tmpdir
-
 import router  # noqa: E402
 
 
@@ -14,16 +14,15 @@ class RouterTests(unittest.TestCase):
         self.state = self.d / "router-sent.json"
 
     def route(self, ev, present, now=1000.0):
-        return router.route(ev, state_path=self.state, notify=str(self.notify),
-                            presence=lambda: present, now=now)
+        return router.route(ev, state_path=self.state, notify=str(self.notify), presence=lambda: present, now=now)
 
     def test_critical_resident_absent_notifies_once_per_6h(self):
         ev = make_event(severity="critical", message="Login from an unknown IP", fingerprint="s:1")
         self.assertTrue(self.route(ev, False, 1000.0))
         self.assertFalse(self.route(ev, False, 1000.0 + 5 * 3600))
         self.assertEqual(len(notify_calls(self.d)), 1)
-        self.assertIn("[sentinel] critical: something happened", notify_calls(self.d)[0])   # subject
-        self.assertIn("Login from an unknown IP [s:1]", notify_calls(self.d)[0])            # body
+        self.assertIn("[sentinel] critical: something happened", notify_calls(self.d)[0])  # subject
+        self.assertIn("Login from an unknown IP [s:1]", notify_calls(self.d)[0])  # body
         self.assertTrue(self.route(ev, False, 1000.0 + 6 * 3600 + 1))
         self.assertEqual(len(notify_calls(self.d)), 2)
 
@@ -54,8 +53,7 @@ class RouterTests(unittest.TestCase):
         bad.write_text("#!/bin/sh\nexit 3\n")
         bad.chmod(0o755)
         ev = make_event(severity="critical")
-        self.assertFalse(router.route(ev, state_path=self.state, notify=str(bad),
-                                      presence=lambda: False, now=1.0))
+        self.assertFalse(router.route(ev, state_path=self.state, notify=str(bad), presence=lambda: False, now=1.0))
         self.assertTrue(self.route(ev, False, 2.0))
 
     def test_default_channel_is_notify_cmd_then_mail(self):
@@ -71,9 +69,9 @@ class RouterTests(unittest.TestCase):
         with mock.patch.dict(os.environ, dict(env, SENTINEL_NOTIFY_CMD=str(self.notify))):
             self.assertTrue(router.default_notify("subj2", "body2"))
         self.assertEqual(notify_calls(self.d), ["subj2 body2"])
-        self.assertEqual(mails.read_text().count("MAIL"), 1)   # notify command replaces mail here
+        self.assertEqual(mails.read_text().count("MAIL"), 1)  # notify command replaces mail here
         with mock.patch.dict(os.environ, {"SENTINEL_NOTIFY_CMD": "", "SENTINEL_EMAIL": ""}):
-            self.assertFalse(router.default_notify("s", "b"))   # nobody configured: not delivered
+            self.assertFalse(router.default_notify("s", "b"))  # nobody configured: not delivered
 
 
 class PresenceTests(unittest.TestCase):
@@ -88,8 +86,9 @@ class PresenceTests(unittest.TestCase):
             off.write_text("")
         elif off.exists():
             off.unlink()
-        return router.resident_present(atlas_dir=atlas, screen_out=screen_out, unit_active=unit_active,
-                                       screen_name=screen_name, unit=unit)
+        return router.resident_present(
+            atlas_dir=atlas, screen_out=screen_out, unit_active=unit_active, screen_name=screen_name, unit=unit
+        )
 
     def test_screen_session_alive(self):
         self.assertTrue(self.p("\t123.agent\t(Detached)\n"))
@@ -105,8 +104,7 @@ class PresenceTests(unittest.TestCase):
         self.assertFalse(self.p("", unit_active=False, screen_name="", unit="agent.service"))
 
     def test_resident_off_means_absent_even_if_alive(self):
-        self.assertFalse(self.p("\t123.agent\t(Detached)\n", unit_active=True, resident_off=True,
-                                unit="agent.service"))
+        self.assertFalse(self.p("\t123.agent\t(Detached)\n", unit_active=True, resident_off=True, unit="agent.service"))
 
     def test_nobody(self):
         self.assertFalse(self.p("No Sockets found.\n"))

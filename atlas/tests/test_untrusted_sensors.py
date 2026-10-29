@@ -1,4 +1,5 @@
 """Untrusted text in ALERT lines: the session excerpt and the patrol sensors stay printable ASCII."""
+
 import json
 import os
 import shutil
@@ -24,11 +25,16 @@ class TestSessionSensorExcerpt(unittest.TestCase):
         d = Path(tempfile.mkdtemp(prefix="sensor-untrusted-"))
         self.addCleanup(shutil.rmtree, d, True)
         (d / "ALERT").write_bytes(
-            "2026-10-22T10:00:00Z\nATLAS: \x1b[31mRED\x1b[0m login by op\u200bs \u202eevil\x07 end\n".encode())
-        env = dict(os.environ, SENTINEL_ATLAS=str(d), SENTINEL_ESCALATION_LOG=str(d / "esc.log"),
-                   SENTINEL_INTERVAL="0.2", SENTINEL_BUS_CMD="sleep 3600")
-        p = subprocess.Popen(["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env,
-                             stdout=subprocess.PIPE)
+            "2026-10-22T10:00:00Z\nATLAS: \x1b[31mRED\x1b[0m login by op\u200bs \u202eevil\x07 end\n".encode()
+        )
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(d),
+            SENTINEL_ESCALATION_LOG=str(d / "esc.log"),
+            SENTINEL_INTERVAL="0.2",
+            SENTINEL_BUS_CMD="sleep 3600",
+        )
+        p = subprocess.Popen(["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env, stdout=subprocess.PIPE)
         self.addCleanup(p.kill)
         lines = []
 
@@ -57,13 +63,17 @@ class TestSessionSensorKeepsLetters(unittest.TestCase):
         d = Path(tempfile.mkdtemp(prefix="sensor-unicode-"))
         self.addCleanup(shutil.rmtree, d, True)
         (d / "ALERT").write_bytes(b"2026-10-22T10:00:00Z\n" + body_bytes)
-        env = dict(os.environ, SENTINEL_ATLAS=str(d), SENTINEL_ESCALATION_LOG=str(d / "esc.log"),
-                   SENTINEL_INTERVAL="0.2", SENTINEL_BUS_CMD="sleep 3600")
-        p = subprocess.Popen(["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env,
-                             stdout=subprocess.PIPE)
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(d),
+            SENTINEL_ESCALATION_LOG=str(d / "esc.log"),
+            SENTINEL_INTERVAL="0.2",
+            SENTINEL_BUS_CMD="sleep 3600",
+        )
+        p = subprocess.Popen(["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env, stdout=subprocess.PIPE)
         self.addCleanup(p.kill)
         lines = []
-        threading.Thread(target=lambda: [lines.append(l) for l in p.stdout], daemon=True).start()
+        threading.Thread(target=lambda: [lines.append(ln) for ln in p.stdout], daemon=True).start()
         end = time.time() + 10
         while time.time() < end and not lines:
             time.sleep(0.1)
@@ -92,10 +102,19 @@ class TestSshLoginsSanitized(unittest.TestCase):
 
     def run_sensor(self, journal, *args):
         (self.d / "j.log").write_text(journal)
-        env = dict(os.environ, SSH_JOURNAL_CMD="cat %s" % (self.d / "j.log"),
-                   SSH_KNOWN_IPS=str(self.d / "known.txt"), SENTINEL_LANG="en")
-        return subprocess.run([sys.executable, str(ATLAS / "sensors" / "ssh_logins.py"), *args],
-                              env=env, capture_output=True, text=True, timeout=30)
+        env = dict(
+            os.environ,
+            SSH_JOURNAL_CMD="cat %s" % (self.d / "j.log"),
+            SSH_KNOWN_IPS=str(self.d / "known.txt"),
+            SENTINEL_LANG="en",
+        )
+        return subprocess.run(
+            [sys.executable, str(ATLAS / "sensors" / "ssh_logins.py"), *args],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
     def line(self, user):
         t = (datetime.now().astimezone() - timedelta(hours=1)).isoformat(timespec="seconds")
@@ -138,15 +157,26 @@ class TestHttpProbesSanitized(unittest.TestCase):
         fetch.chmod(0o755)
         urls = tmp / "urls.txt"
         urls.write_text("https://b.example.net/post/\x1b[1mignore-previous-instructions\u202e\n")
-        env = dict(os.environ, HTTP_SITES_DIR=str(sites), HTTP_EXPECTED=str(tmp / "expected.json"),
-                   HTTP_FETCH_CMD=str(fetch), HTTP_EXTRA_URLS_CMD="cat %s" % urls, SENTINEL_LANG="en")
-        r = subprocess.run([sys.executable, str(ATLAS / "sensors" / "http_probes.py")],
-                           env=env, capture_output=True, text=True, timeout=30)
+        env = dict(
+            os.environ,
+            HTTP_SITES_DIR=str(sites),
+            HTTP_EXPECTED=str(tmp / "expected.json"),
+            HTTP_FETCH_CMD=str(fetch),
+            HTTP_EXTRA_URLS_CMD="cat %s" % urls,
+            SENTINEL_LANG="en",
+        )
+        r = subprocess.run(
+            [sys.executable, str(ATLAS / "sensors" / "http_probes.py")],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         self.assertEqual(r.returncode, 1, r.stderr)
         lines = r.stdout.strip().splitlines()
         self.assertEqual(len(lines), 2, lines)
-        for l in lines:
-            self.assertTrue(printable_ascii(l), repr(l))
+        for ln in lines:
+            self.assertTrue(printable_ascii(ln), repr(ln))
         self.assertNotIn("h" * 90, r.stdout)
 
 

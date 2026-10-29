@@ -18,35 +18,47 @@ because someone changed it. If neither the owner nor the resident did it, it is 
 
 Volatile numbers (disk, RAM, load, ban counts) live under "vitals" and are never diffed.
 """
-import contextlib, hashlib, json, os, pwd, re, shlex, shutil, subprocess, sys
-from datetime import datetime, timezone
+
+import contextlib
+import hashlib
+import json
+import os
+import pwd
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+from datetime import UTC, datetime
 
 # Code and instance state are separate: SENTINEL_ATLAS selects the state directory (baseline, current,
 # snapshots, sentinel.env). Unset = next to the code.
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, CODE_DIR)
 import envfile  # noqa: E402
+
 from i18n import t  # noqa: E402
+
 sys.path.insert(0, os.path.join(os.path.dirname(CODE_DIR), "sentinel"))
 import bus  # noqa: E402
 import notify  # noqa: E402
 
 BASE = os.path.abspath(os.environ.get("SENTINEL_ATLAS") or CODE_DIR)
-envfile.load(BASE)   # $BASE/sentinel.env; variables already in the environment win
+envfile.load(BASE)  # $BASE/sentinel.env; variables already in the environment win
 CURRENT = os.path.join(BASE, "current.json")
 BASELINE = os.path.join(BASE, "baseline.json")
 SNAPDIR = os.path.join(BASE, "snapshots")
 
 
-CMD_TIMEOUT = 25         # seconds for an ordinary command
-SLOW_CMD_TIMEOUT = 40    # dpkg-query, certbot
-SETUID_TIMEOUT = 60      # find over /usr /bin /sbin /opt
-ERROR_TEXT_LIMIT = 220   # characters of one recorded measurement error
-CMD_PREVIEW = 70         # characters of a command shown in an error
-SHA_PREFIX = 16          # characters of a sha256 kept in the snapshot
-CERT_ERROR_LIMIT = 200   # characters of a certbot / journal error
-DIFF_VALUE_LIMIT = 160   # characters of an added or removed value in a diff line
-DIFF_CHANGE_LIMIT = 80   # characters of each side of a changed value in a diff line
+CMD_TIMEOUT = 25  # seconds for an ordinary command
+SLOW_CMD_TIMEOUT = 40  # dpkg-query, certbot
+SETUID_TIMEOUT = 60  # find over /usr /bin /sbin /opt
+ERROR_TEXT_LIMIT = 220  # characters of one recorded measurement error
+CMD_PREVIEW = 70  # characters of a command shown in an error
+SHA_PREFIX = 16  # characters of a sha256 kept in the snapshot
+CERT_ERROR_LIMIT = 200  # characters of a certbot / journal error
+DIFF_VALUE_LIMIT = 160  # characters of an added or removed value in a diff line
+DIFF_CHANGE_LIMIT = 80  # characters of each side of a changed value in a diff line
 OS_RELEASE = "/etc/os-release"
 LOADAVG = "/proc/loadavg"
 PASSWD = "/etc/passwd"
@@ -185,18 +197,19 @@ def have(tool):
 
 
 def services(errors=None):
-    out = measure("services", "systemctl list-units --type=service --state=running --no-legend --plain",
-                  errors=errors) or ""
-    names = sorted(l.split()[0] for l in out.splitlines() if l.strip())
-    enabled = measure("services", "systemctl list-unit-files --state=enabled --no-legend --plain",
-                      errors=errors) or ""
-    en = sorted(l.split()[0] for l in enabled.splitlines() if l.strip())
+    out = (
+        measure("services", "systemctl list-units --type=service --state=running --no-legend --plain", errors=errors)
+        or ""
+    )
+    names = sorted(ln.split()[0] for ln in out.splitlines() if ln.strip())
+    enabled = measure("services", "systemctl list-unit-files --state=enabled --no-legend --plain", errors=errors) or ""
+    en = sorted(ln.split()[0] for ln in enabled.splitlines() if ln.strip())
     return {"running": names, "enabled": en}
 
 
 def timers(errors=None):
     out = measure("timers", "systemctl list-timers --all --no-legend --plain", errors=errors) or ""
-    return sorted(re.sub(r"\s+", " ", l).split(" ")[-2] for l in out.splitlines() if ".timer" in l)
+    return sorted(re.sub(r"\s+", " ", ln).split(" ")[-2] for ln in out.splitlines() if ".timer" in ln)
 
 
 def listeners(errors=None):
@@ -320,11 +333,11 @@ def crontabs(errors=None):
     for u in crontab_users(errors=errors):
         rc, out, err = run_checked(f"sudo crontab -u {shlex.quote(u)} -l")
         if rc == 1 and "no crontab" in err:
-            out = ""     # a user without a crontab is a real, empty result
+            out = ""  # a user without a crontab is a real, empty result
         elif rc != 0:
             record(errors, "crontabs", f"crontab -u {u} rc={rc} {err or out}")
             continue
-        lines = [l for l in out.splitlines() if l.strip() and not l.startswith("#")]
+        lines = [ln for ln in out.splitlines() if ln.strip() and not ln.startswith("#")]
         if lines:
             digest = hashlib.sha256("\n".join(lines).encode()).hexdigest()[:SHA_PREFIX]
             res[u] = {"lines": len(lines), "sha": digest}
@@ -337,11 +350,18 @@ def crontabs(errors=None):
 
 def packages(errors=None):
     """Installed packages (status ii) as a sorted list of `name=version`."""
-    out = measure("packages", "dpkg-query -W -f='${db:Status-Abbrev} ${Package}=${Version}\\n'",
-                  timeout=SLOW_CMD_TIMEOUT, errors=errors) or ""
+    out = (
+        measure(
+            "packages",
+            "dpkg-query -W -f='${db:Status-Abbrev} ${Package}=${Version}\\n'",
+            timeout=SLOW_CMD_TIMEOUT,
+            errors=errors,
+        )
+        or ""
+    )
     res = []
-    for l in out.splitlines():
-        f = l.split()
+    for ln in out.splitlines():
+        f = ln.split()
         if len(f) == 2 and f[0] == "ii":
             res.append(f[1])
     return sorted(res)
@@ -463,7 +483,7 @@ def certs_measure():
     ("INVALID: EXPIRED") gets days 0 and expired True.
     """
     if not have("certbot"):
-        return {}, ""   # not installed: no certificates to watch (an SSL vhost without certs still shows)
+        return {}, ""  # not installed: no certificates to watch (an SSL vhost without certs still shows)
     rc, out, err = run_checked("sudo certbot certificates", timeout=SLOW_CMD_TIMEOUT)
     if rc is None or rc != 0 or out.startswith("__ERROR__"):
         return {}, f"certbot rc={rc} {err or out}"[:CERT_ERROR_LIMIT]
@@ -498,8 +518,12 @@ def certs():
 
 
 def setuid(errors=None):
-    out = measure("setuid", "sudo find /usr /bin /sbin /opt -xdev -perm -4000 -type f",
-                  timeout=SETUID_TIMEOUT, errors=errors) or ""
+    out = (
+        measure(
+            "setuid", "sudo find /usr /bin /sbin /opt -xdev -perm -4000 -type f", timeout=SETUID_TIMEOUT, errors=errors
+        )
+        or ""
+    )
     return sorted(out.split())
 
 
@@ -507,7 +531,7 @@ def firewall(errors=None):
     if not have("ufw"):
         return []
     out = measure("firewall", "sudo ufw status numbered", errors=errors) or ""
-    return [re.sub(r"\s+", " ", l.strip()) for l in out.splitlines() if l.strip().startswith("[")]
+    return [re.sub(r"\s+", " ", ln.strip()) for ln in out.splitlines() if ln.strip().startswith("[")]
 
 
 APT_LIST = "/etc/apt/sources.list"
@@ -527,11 +551,26 @@ def apt_sources(errors=None):
 # What an attacker uses to persist or alters to hide traces (see sensitive_files).
 UNIT_DIRS = ("/etc/systemd/system", "/etc/systemd/user", "/usr/local/lib/systemd/system")
 UNIT_SUFFIXES = (".service", ".timer", ".socket", ".path")
-SINGLE_FILES = ("/etc/ld.so.preload", "/etc/hosts", "/etc/resolv.conf", "/etc/nsswitch.conf",
-                "/etc/pam.d/sshd", "/etc/ssh/sshd_config", "/etc/profile", "/etc/bash.bashrc",
-                "/etc/rc.local", "/etc/environment")
-WATCHED_DIRS = ("/etc/cron.hourly", "/etc/cron.daily", "/etc/profile.d", "/etc/sudoers.d",
-                "/etc/ssh/sshd_config.d", "/etc/apt/apt.conf.d")
+SINGLE_FILES = (
+    "/etc/ld.so.preload",
+    "/etc/hosts",
+    "/etc/resolv.conf",
+    "/etc/nsswitch.conf",
+    "/etc/pam.d/sshd",
+    "/etc/ssh/sshd_config",
+    "/etc/profile",
+    "/etc/bash.bashrc",
+    "/etc/rc.local",
+    "/etc/environment",
+)
+WATCHED_DIRS = (
+    "/etc/cron.hourly",
+    "/etc/cron.daily",
+    "/etc/profile.d",
+    "/etc/sudoers.d",
+    "/etc/ssh/sshd_config.d",
+    "/etc/apt/apt.conf.d",
+)
 HOST_KEY_FILES = ("/etc/ssh/ssh_host_ed25519_key.pub", "/etc/ssh/ssh_host_rsa_key.pub")
 
 
@@ -547,8 +586,15 @@ def unit_hashes(errors=None):
         if not probe("sensitive_files", f"sudo test -d {shlex.quote(d)}", errors):
             continue
         # the argument list sudoers pins (examples/sudoers.d/atlas); the suffix filter below is a second guard
-        out = measure("sensitive_files", f"sudo find {shlex.quote(d)} -maxdepth 2 -type f \\( -name '*.service' "
-                      "-o -name '*.timer' -o -name '*.socket' -o -name '*.path' \\)", errors=errors) or ""
+        out = (
+            measure(
+                "sensitive_files",
+                f"sudo find {shlex.quote(d)} -maxdepth 2 -type f \\( -name '*.service' "
+                "-o -name '*.timer' -o -name '*.socket' -o -name '*.path' \\)",
+                errors=errors,
+            )
+            or ""
+        )
         for f in sorted(x for x in out.split() if x.endswith(UNIT_SUFFIXES)):
             h = sensitive_hash(f, errors)
             if h:
@@ -588,7 +634,7 @@ def host_key_fingerprints(errors=None):
     for kf in HOST_KEY_FILES:
         if probe("sensitive_files", f"sudo test -e {shlex.quote(kf)}", errors):
             out = measure("sensitive_files", f"sudo ssh-keygen -lf {shlex.quote(kf)}", errors=errors) or ""
-            keys += [l.split()[1] for l in out.splitlines() if len(l.split()) > 2]
+            keys += [ln.split()[1] for ln in out.splitlines() if len(ln.split()) > 2]
     return sorted(keys)
 
 
@@ -640,14 +686,14 @@ def silent_failures_checked():
         if rc != 0:
             unknown[u] = f"journalctl rc={rc} {jerr or jout}"[:CERT_ERROR_LIMIT]
             continue
-        lines = [l for l in jout.splitlines() if re.search("Failed with result|Succeeded|Finished", l)]
+        lines = [ln for ln in jout.splitlines() if re.search("Failed with result|Succeeded|Finished", ln)]
         if not lines:
             continue
         last = lines[-1]
         if "Failed with result" not in last:
             continue
         rc7, j7, e7 = run_checked(f"sudo journalctl -u {shlex.quote(u)} --since -7d --no-pager")
-        failures = sum(1 for l in j7.splitlines() if "Failed with result" in l) if rc7 == 0 else "?"
+        failures = sum(1 for ln in j7.splitlines() if "Failed with result" in ln) if rc7 == 0 else "?"
         when = last.split()[0] if last.split() else "?"
         # human-facing text (lands in ALERT): from the catalog
         res[u] = t("atlas.silent_failure", when=when, count=failures)
@@ -719,7 +765,7 @@ def vital_load(bad):
 def vital_banned(bad):
     """Currently banned addresses of the sshd jail; "" when fail2ban is not installed."""
     if not have("fail2ban-client"):
-        return ""     # only when installed: sudo logs "command not allowed" for a binary that does not exist
+        return ""  # only when installed: sudo logs "command not allowed" for a binary that does not exist
     out = run("sudo fail2ban-client status sshd")
     if out is None:
         bad["banned"] = "fail2ban-client status sshd failed"
@@ -733,7 +779,7 @@ def vital_failed_units(bad):
     if out is None:
         bad["failed_units"] = "systemctl --failed failed"
         return "?"
-    return str(len([l for l in out.splitlines() if l.strip()]))
+    return str(len([ln for ln in out.splitlines() if ln.strip()]))
 
 
 def vital_uptime(bad):
@@ -774,10 +820,20 @@ def vitals(errors=None):
 # The collectors of the snapshot, in snapshot order. Every entry is f(errors=None); snapshot() passes one
 # error collector to all of them. (certs and host come first and separately: certs_measure returns a pair.)
 SECTIONS = {
-    "services": services, "timers": timers, "listeners": listeners, "containers": containers,
-    "accounts": accounts, "sudoers": sudoers, "vhosts": vhosts, "crontabs": crontabs,
-    "packages": packages, "setuid": setuid, "sensitive_files": sensitive_files, "firewall": firewall,
-    "apt_sources": apt_sources, "vitals": vitals,
+    "services": services,
+    "timers": timers,
+    "listeners": listeners,
+    "containers": containers,
+    "accounts": accounts,
+    "sudoers": sudoers,
+    "vhosts": vhosts,
+    "crontabs": crontabs,
+    "packages": packages,
+    "setuid": setuid,
+    "sensitive_files": sensitive_files,
+    "firewall": firewall,
+    "apt_sources": apt_sources,
+    "vitals": vitals,
 }
 
 
@@ -785,7 +841,7 @@ def snapshot():
     errors = {}
     certs_, certs_error = certs_measure()
     snap = {
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "host": host_info(errors),
         "certs": certs_,
     }
@@ -820,7 +876,9 @@ def diff(old, new, path=""):
         for x in sorted(set(map(json.dumps, new)) - set(map(json.dumps, old))):
             out.append(f"+ ADDED   {path}: {json.loads(x)}")
     elif old != new:
-        out.append(f"~ CHANGED {path}: {json.dumps(old, ensure_ascii=False)[:DIFF_CHANGE_LIMIT]} -> {json.dumps(new, ensure_ascii=False)[:DIFF_CHANGE_LIMIT]}")
+        out.append(
+            f"~ CHANGED {path}: {json.dumps(old, ensure_ascii=False)[:DIFF_CHANGE_LIMIT]} -> {json.dumps(new, ensure_ascii=False)[:DIFF_CHANGE_LIMIT]}"
+        )
     return out
 
 
@@ -844,7 +902,7 @@ def write(obj, path):
 
 
 WHO_RE = re.compile(r"[A-Za-z0-9_.-]{1,32}")
-SECTION_LIMIT = 20       # sections named in an event or notice
+SECTION_LIMIT = 20  # sections named in an event or notice
 SECTION_NAME_LIMIT = 80  # characters of one ALERT section title
 
 
@@ -893,8 +951,16 @@ def audit_event(sensor, what, evidence):
     fp_sha = "".join(chr(ord("a") + int(c, 16)) for c in sha[:12])
     try:
         with state_env():
-            bus.emit({"sensor": sensor, "severity": "warning", "confidence": "measured", "what": what,
-                      "fingerprint": "%s:%s" % (sensor, fp_sha), "evidence": evidence})
+            bus.emit(
+                {
+                    "sensor": sensor,
+                    "severity": "warning",
+                    "confidence": "measured",
+                    "what": what,
+                    "fingerprint": "%s:%s" % (sensor, fp_sha),
+                    "evidence": evidence,
+                }
+            )
     except Exception as e:  # noqa: BLE001 - the trail must not break the command
         print("atlas: bus event not written (%s): %s" % (sensor, e), file=sys.stderr)
 
@@ -912,7 +978,7 @@ def tell_human(subject, body, kind):
 
 
 def now_iso():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def read_object(path):
@@ -938,17 +1004,23 @@ def cmd_bless():
     try:
         old = None if first else read_object(BASELINE)
     except (OSError, ValueError):
-        old = None   # an unreadable old baseline is replaced; every section counts as changed below
+        old = None  # an unreadable old baseline is replaced; every section counts as changed below
     sections = changed_sections(old, cur) if old is not None else sorted(k for k in cur if k not in IGNORE)
     write(cur, BASELINE)
     print("baseline updated")
     sha256 = hashlib.sha256(open(BASELINE, "rb").read()).hexdigest()
     shown = sections[:SECTION_LIMIT]
-    audit_event("atlas.bless", "baseline accepted by %s" % who(),
-                {"who": who(), "sections": shown, "first": first, "sha256": sha256})
+    audit_event(
+        "atlas.bless",
+        "baseline accepted by %s" % who(),
+        {"who": who(), "sections": shown, "first": first, "sha256": sha256},
+    )
     listing = t("atlas.bless_first") if first else (", ".join(shown) or "-")
-    tell_human(t("atlas.bless_subject", who=who()),
-               t("atlas.bless_body", who=who(), when=now_iso(), sections=listing, sha256=sha256), "atlas.bless")
+    tell_human(
+        t("atlas.bless_subject", who=who()),
+        t("atlas.bless_body", who=who(), when=now_iso(), sections=listing, sha256=sha256),
+        "atlas.bless",
+    )
     return 0
 
 
@@ -979,18 +1051,19 @@ def cmd_ack():
         return 3
     body = raw.partition(b"\n")[2].decode("utf-8", "replace")
     sections = [s[:SECTION_NAME_LIMIT] for s in re.findall(r"^== (.+) ==$", body, re.M)][:SECTION_LIMIT]
-    audit_event("atlas.ack", "alert acknowledged by %s" % who(),
-                {"who": who(), "sections": sections, "sha256": sha256})
-    tell_human(t("atlas.ack_subject", who=who()),
-               t("atlas.ack_body", who=who(), when=now_iso(), sections=", ".join(sections) or "-", sha256=sha256),
-               "atlas.ack")
+    audit_event("atlas.ack", "alert acknowledged by %s" % who(), {"who": who(), "sections": sections, "sha256": sha256})
+    tell_human(
+        t("atlas.ack_subject", who=who()),
+        t("atlas.ack_body", who=who(), when=now_iso(), sections=", ".join(sections) or "-", sha256=sha256),
+        "atlas.ack",
+    )
     print("alert acknowledged")
     return 0
 
 
 def snapshot_unknowns(snap):
     """EVERY unknown/error field of a snapshot as readable lines; empty list = fully measured."""
-    v = (snap.get("vitals") or {})
+    v = snap.get("vitals") or {}
     out = []
     for k, e in sorted((v.get("measure_errors") or {}).items()):
         out.append(f"measure_errors.{k}: {e}")
@@ -1035,10 +1108,10 @@ def cmd_thresholds():
     if snap is None:
         return rc
     alarms, unknown = thresholds(snap, ssl_vhost_count())
-    for l in alarms:
-        print("  " + l)
-    for l in unknown:
-        print("  " + l, file=sys.stderr)
+    for ln in alarms:
+        print("  " + ln)
+    for ln in unknown:
+        print("  " + ln, file=sys.stderr)
     return 2 if unknown else (1 if alarms else 0)
 
 
@@ -1061,12 +1134,25 @@ def cmd_show():
     snap = take_snapshot()
     v = snap["vitals"]
     print(f"{snap['host']['os']} / {snap['host']['kernel']} / {snap['host']['ip']}  up {v['uptime']}")
-    print(t("atlas.show_disk", used=v["disk_used_pct"], avail=v["disk_avail"], mem=v["mem_available_mb"],
-            load=v["load"], bans=v["banned_sshd"]))
-    print(t("atlas.show_services", count=len(snap["services"]["running"]),
-            containers=", ".join(snap["containers"])))
-    print(t("atlas.show_vhosts", vhosts=len(snap["vhosts"]), ports=len(snap["listeners"]),
-            accounts=", ".join(snap["accounts"])))
+    print(
+        t(
+            "atlas.show_disk",
+            used=v["disk_used_pct"],
+            avail=v["disk_avail"],
+            mem=v["mem_available_mb"],
+            load=v["load"],
+            bans=v["banned_sshd"],
+        )
+    )
+    print(t("atlas.show_services", count=len(snap["services"]["running"]), containers=", ".join(snap["containers"])))
+    print(
+        t(
+            "atlas.show_vhosts",
+            vhosts=len(snap["vhosts"]),
+            ports=len(snap["listeners"]),
+            accounts=", ".join(snap["accounts"]),
+        )
+    )
     for d, c in sorted(snap["certs"].items(), key=lambda x: -1 if x[1]["days"] is None else x[1]["days"])[:3]:
         print(t("atlas.show_cert", name=d, days=c["days"] if c["days"] is not None else "?"))
     if v.get("not_present"):
@@ -1079,8 +1165,7 @@ def cmd_check():
     snap = take_snapshot()
     if snap["vitals"].get("measure_errors"):
         # human-facing (lands in ALERT): a failed measurement is UNKNOWN, never an empty inventory
-        print(t("atlas.measure_failed") + "\n" + measure_errors_text(snap["vitals"]["measure_errors"]),
-              file=sys.stderr)
+        print(t("atlas.measure_failed") + "\n" + measure_errors_text(snap["vitals"]["measure_errors"]), file=sys.stderr)
         return 2
     if not os.path.exists(BASELINE):
         # never an implicit baseline: whatever state the host is in on the first run would become "normal"
@@ -1101,8 +1186,15 @@ def cmd_check():
     return 1
 
 
-COMMANDS = {"bless": cmd_bless, "ack": cmd_ack, "thresholds": cmd_thresholds, "silent": cmd_silent,
-            "snap": cmd_snap, "show": cmd_show, "check": cmd_check}
+COMMANDS = {
+    "bless": cmd_bless,
+    "ack": cmd_ack,
+    "thresholds": cmd_thresholds,
+    "silent": cmd_silent,
+    "snap": cmd_snap,
+    "show": cmd_show,
+    "check": cmd_check,
+}
 
 
 def main(argv=None):

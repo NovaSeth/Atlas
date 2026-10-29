@@ -1,11 +1,11 @@
 """Escalation: empty PTEXT under set -u; HTTP probes skip reserved TLD server names."""
+
 import json
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 
@@ -22,17 +22,27 @@ class TestEscalationHealthyNoUnbound(unittest.TestCase):
         for d in (self.atlas, self.bin):
             d.mkdir()
         self.mails = self.tmp / "mails.txt"
-        for n, body in (("mail", 'echo "MAIL $*" >> %s; cat >/dev/null' % self.mails),
-                        ("screen", 'echo "1.agent (Attached)"'), ("systemctl", "exit 0")):
+        for n, body in (
+            ("mail", 'echo "MAIL $*" >> %s; cat >/dev/null' % self.mails),
+            ("screen", 'echo "1.agent (Attached)"'),
+            ("systemctl", "exit 0"),
+        ):
             (self.bin / n).write_text("#!/bin/bash\n%s\n" % body)
             (self.bin / n).chmod(0o755)
         (self.atlas / "heartbeat.log").write_text("x ok\n")
         self.hb = self.tmp / "stream.heartbeat"
 
     def run_esc(self):
-        env = dict(os.environ, SENTINEL_ATLAS=str(self.atlas), SENTINEL_STATE=str(self.state),
-                   SENTINEL_EMAIL="nobody@example.com", SENTINEL_RESIDENT_SCREEN="agent", SENTINEL_RESIDENT_UNIT="agent.service",
-                   SENTINEL_STREAM_HEARTBEAT=str(self.hb), PATH="%s:%s" % (self.bin, os.environ["PATH"]))
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(self.atlas),
+            SENTINEL_STATE=str(self.state),
+            SENTINEL_EMAIL="nobody@example.com",
+            SENTINEL_RESIDENT_SCREEN="agent",
+            SENTINEL_RESIDENT_UNIT="agent.service",
+            SENTINEL_STREAM_HEARTBEAT=str(self.hb),
+            PATH="%s:%s" % (self.bin, os.environ["PATH"]),
+        )
         return subprocess.run(["bash", str(ESC)], env=env, capture_output=True, text=True, timeout=60)
 
     def test_healthy_run_has_no_unbound_variable_and_logs_ok(self):
@@ -56,16 +66,20 @@ class TestHttpProbesReservedTlds(unittest.TestCase):
         sites = tmp / "sites"
         sites.mkdir()
         names = ["default.invalid", "x.test", "y.example", "z.localhost", "real.example.net"]
-        (sites / "a.conf").write_text("".join(
-            "<VirtualHost *:443>\n    ServerName %s\n</VirtualHost>\n" % n for n in names))
+        (sites / "a.conf").write_text(
+            "".join("<VirtualHost *:443>\n    ServerName %s\n</VirtualHost>\n" % n for n in names)
+        )
         exp = tmp / "expected.json"
         exp.write_text(json.dumps({"real.example.net": [200]}))
         log = tmp / "fetched.txt"
-        (tmp / "fetch.py").write_text(
-            "import sys\nopen(%r, 'a').write(sys.argv[1] + '\\n')\nprint(200)\n" % str(log))
-        env = dict(os.environ, HTTP_SITES_DIR=str(sites), HTTP_EXPECTED=str(exp),
-                   HTTP_FETCH_CMD="python3 %s" % (tmp / "fetch.py"),
-                   HTTP_ARTICLE_CMD="echo https://real.example.net/post/")
+        (tmp / "fetch.py").write_text("import sys\nopen(%r, 'a').write(sys.argv[1] + '\\n')\nprint(200)\n" % str(log))
+        env = dict(
+            os.environ,
+            HTTP_SITES_DIR=str(sites),
+            HTTP_EXPECTED=str(exp),
+            HTTP_FETCH_CMD="python3 %s" % (tmp / "fetch.py"),
+            HTTP_ARTICLE_CMD="echo https://real.example.net/post/",
+        )
         r = subprocess.run([sys.executable, str(PROBES)], env=env, capture_output=True, text=True, timeout=60)
         fetched = log.read_text().split()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)

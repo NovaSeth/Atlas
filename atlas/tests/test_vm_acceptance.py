@@ -3,6 +3,7 @@
 
 Each test pins one of them; nothing here touches real sudo, real state or the network.
 """
+
 import os
 import shutil
 import subprocess
@@ -32,9 +33,11 @@ class TestOptionalToolsAbsent(unittest.TestCase):
             calls.append(cmd)
             return "/dev/vda1 5.8G 1G 4.8G 18% /" if cmd.startswith("df") else "1"
 
-        with mock.patch.object(atlas, "run", side_effect=fake_run), \
-                mock.patch.object(atlas, "silent_failures_checked", return_value=({}, {})), \
-                mock.patch.object(atlas, "have", side_effect=lambda tool: tool in installed):
+        with (
+            mock.patch.object(atlas, "run", side_effect=fake_run),
+            mock.patch.object(atlas, "silent_failures_checked", return_value=({}, {})),
+            mock.patch.object(atlas, "have", side_effect=lambda tool: tool in installed),
+        ):
             v = atlas.vitals()
         return v, calls
 
@@ -65,13 +68,22 @@ class TestHttpProbesDefaultSite(unittest.TestCase):
         for name, body in files.items():
             (sites / name).write_text(body)
         (d / "http-expected.json").write_text("{}")
-        env = dict(os.environ, SENTINEL_ATLAS=str(d), HTTP_SITES_DIR=str(sites),
-                   HTTP_EXPECTED=str(d / "http-expected.json"), HTTP_FETCH_CMD="false")
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(d),
+            HTTP_SITES_DIR=str(sites),
+            HTTP_EXPECTED=str(d / "http-expected.json"),
+            HTTP_FETCH_CMD="false",
+        )
         return subprocess.run([sys.executable, str(PROBES)], env=env, capture_output=True, text=True, timeout=30)
 
     def test_default_site_without_server_name_is_clean_with_a_note(self):
-        r = self.run_probes({"000-default.conf": "<VirtualHost *:80>\n\t#ServerName www.example.com\n"
-                                                 "\tDocumentRoot /var/www/html\n</VirtualHost>\n"})
+        r = self.run_probes(
+            {
+                "000-default.conf": "<VirtualHost *:80>\n\t#ServerName www.example.com\n"
+                "\tDocumentRoot /var/www/html\n</VirtualHost>\n"
+            }
+        )
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("not present", r.stdout)
 

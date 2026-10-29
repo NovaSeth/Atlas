@@ -5,6 +5,7 @@ the reverse control. Nothing writes to a real state directory, calls real sudo o
 command, or sends mail: temporary directories, commands replaced via environment variables or
 unittest.mock.
 """
+
 import json
 import os
 import shutil
@@ -22,7 +23,7 @@ ATLAS = Path(__file__).resolve().parents[1]
 ROOT = ATLAS.parent
 sys.path.insert(0, str(ATLAS))
 
-STUB_ATLAS = r'''#!/usr/bin/env python3
+STUB_ATLAS = r"""#!/usr/bin/env python3
 import os, sys
 c = sys.argv[1]
 if c == "check":
@@ -39,7 +40,7 @@ if c == "silent":
     if o: print(o)
     if os.environ.get("STUB_SILENT_ERR"): print(os.environ["STUB_SILENT_ERR"], file=sys.stderr)
     sys.exit(int(os.environ.get("STUB_SILENT_RC", "1" if o else "0")))
-'''
+"""
 
 
 def write_atomic(path, text):
@@ -143,7 +144,9 @@ class TestStableAlert(unittest.TestCase):
         self.assertIn(" alarm (", (self.d / "heartbeat.log").read_text().splitlines()[-1])
 
     def test_silent_failures_and_thresholds_have_headers(self):
-        patrol(self.d, STUB_SILENT_OUT="  certbot.service: padl", STUB_THRESHOLDS_OUT="  dysk 95%", STUB_THRESHOLDS_RC=1)
+        patrol(
+            self.d, STUB_SILENT_OUT="  certbot.service: padl", STUB_THRESHOLDS_OUT="  dysk 95%", STUB_THRESHOLDS_RC=1
+        )
         txt = self.alert.read_text()
         self.assertIn("SILENT FAILURES", txt)
         self.assertIn("RESOURCE AND CERTIFICATE THRESHOLDS", txt)
@@ -155,17 +158,20 @@ class Collector:
         threading.Thread(target=self._read, args=(proc,), daemon=True).start()
 
     def _read(self, proc):
-        for l in proc.stdout:
-            self.lines.append(l.rstrip("\n"))
+        for ln in proc.stdout:
+            self.lines.append(ln.rstrip("\n"))
 
 
 class TestSessionSensor(unittest.TestCase):
     def test_same_content_other_stamp_is_one_line(self):
         d = Path(tempfile.mkdtemp(prefix="sensor-test-"))
         self.addCleanup(shutil.rmtree, d, True)
-        env = dict(os.environ, SENTINEL_ATLAS=str(d), SENTINEL_ESCALATION_LOG=str(d / "esc.log"), SENTINEL_INTERVAL="0.2")
-        p = subprocess.Popen(["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env,
-                             stdout=subprocess.PIPE, text=True)
+        env = dict(
+            os.environ, SENTINEL_ATLAS=str(d), SENTINEL_ESCALATION_LOG=str(d / "esc.log"), SENTINEL_INTERVAL="0.2"
+        )
+        p = subprocess.Popen(
+            ["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env, stdout=subprocess.PIPE, text=True
+        )
         self.addCleanup(p.kill)
         k = Collector(p)
         write_atomic(d / "ALERT", "2026-10-22T10:00:00Z\nATLAS: A\n")
@@ -185,14 +191,21 @@ class TestSessionSensor(unittest.TestCase):
 class TestPackagesCrontabsThresholds(unittest.TestCase):
     def setUp(self):
         import atlas
+
         self.atlas = atlas
 
     def test_snapshot_has_packages_key_only_ii(self):
         dpkg = "ii  zlib1g=1.3\nrc  old=1.0\nii  bash=5.2\n"
+
         def fake_rc(c, timeout=25):
             return (0, dpkg if "dpkg-query" in c else "abcdef", "")
-        with mock.patch.object(self.atlas, "run", side_effect=lambda c, timeout=25: dpkg if "dpkg-query" in c else "abcdef"), \
-                mock.patch.object(self.atlas, "run_checked", side_effect=fake_rc):
+
+        with (
+            mock.patch.object(
+                self.atlas, "run", side_effect=lambda c, timeout=25: dpkg if "dpkg-query" in c else "abcdef"
+            ),
+            mock.patch.object(self.atlas, "run_checked", side_effect=fake_rc),
+        ):
             self.assertEqual(self.atlas.packages(), ["bash=5.2", "zlib1g=1.3"])
             self.assertIn("packages", self.atlas.snapshot())
 
@@ -210,8 +223,10 @@ class TestPackagesCrontabsThresholds(unittest.TestCase):
         d = Path(tempfile.mkdtemp(prefix="cron-test-"))
         self.addCleanup(shutil.rmtree, d, True)
         (d / "passwd").write_text("root:x:0:0:r:/root:/bin/bash\nnewuser:x:1005:1005::/home/newuser:/bin/bash\n")
+
         def fake_rc(c, timeout=25):
             return (0, "" if "test -d" in c else "ops\nwww-data", "")
+
         with mock.patch.object(self.atlas, "run_checked", side_effect=fake_rc):
             u = self.atlas.crontab_users(str(d / "passwd"))
         self.assertEqual(u, ["newuser", "ops", "root", "www-data"])
@@ -222,7 +237,7 @@ class TestPackagesCrontabsThresholds(unittest.TestCase):
 
     def test_certs(self):
         a, n = self.atlas.thresholds(self.snap({"x.pl": {"days": 10}}), 1)
-        self.assertTrue(any("x.pl" in l for l in a))
+        self.assertTrue(any("x.pl" in ln for ln in a))
         a, n = self.atlas.thresholds(self.snap({"x.pl": {"days": 60}}), 1)
         self.assertEqual((a, n), ([], []))  # reverse
         a, n = self.atlas.thresholds(self.snap({}), 2)
@@ -232,9 +247,9 @@ class TestPackagesCrontabsThresholds(unittest.TestCase):
 
     def test_resources(self):
         a, n = self.atlas.thresholds(self.snap({"x": {"days": 60}}, disk="95%"), 1)
-        self.assertTrue(any("disk" in l for l in a))
+        self.assertTrue(any("disk" in ln for ln in a))
         a, n = self.atlas.thresholds(self.snap({"x": {"days": 60}}, mem="100"), 1)
-        self.assertTrue(any("RAM" in l for l in a))
+        self.assertTrue(any("RAM" in ln for ln in a))
         a, n = self.atlas.thresholds(self.snap({"x": {"days": 60}}, disk="41%", mem="3700"), 1)
         self.assertEqual((a, n), ([], []))
         a, n = self.atlas.thresholds(self.snap({"x": {"days": 60}}, disk="?", mem=""), 1)
@@ -249,11 +264,18 @@ class TestSsh(unittest.TestCase):
 
     def run_sensor(self, journal, cmd=None, known=None):
         (self.d / "j.log").write_text(journal)
-        env = dict(os.environ,
-                   SSH_JOURNAL_CMD=cmd or f"cat {self.d / 'j.log'}",
-                   SSH_KNOWN_IPS=known or str(self.d / "known.txt"))
-        return subprocess.run([sys.executable, str(ATLAS / "sensors" / "ssh_logins.py")],
-                              env=env, capture_output=True, text=True, timeout=30)
+        env = dict(
+            os.environ,
+            SSH_JOURNAL_CMD=cmd or f"cat {self.d / 'j.log'}",
+            SSH_KNOWN_IPS=known or str(self.d / "known.txt"),
+        )
+        return subprocess.run(
+            [sys.executable, str(ATLAS / "sensors" / "ssh_logins.py")],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
 
     def line(self, ip, hours_ago=1, text="Accepted publickey for ops from"):
         t = (datetime.now().astimezone() - timedelta(hours=hours_ago)).isoformat(timespec="seconds")
@@ -272,8 +294,10 @@ class TestSsh(unittest.TestCase):
         self.assertEqual(self.run_sensor(self.line("198.51.100.4")).returncode, 0)
 
     def test_pubkey_accepted_algorithms_gives_none(self):
-        l = self.line("203.0.113.99", text="userauth_pubkey: key type ssh-rsa not in PubkeyAcceptedAlgorithms [preauth] from")
-        self.assertEqual(self.run_sensor(l).returncode, 0)
+        ln = self.line(
+            "203.0.113.99", text="userauth_pubkey: key type ssh-rsa not in PubkeyAcceptedAlgorithms [preauth] from"
+        )
+        self.assertEqual(self.run_sensor(ln).returncode, 0)
 
     def test_older_than_window_clears(self):
         self.assertEqual(self.run_sensor(self.line("203.0.113.99", hours_ago=30)).returncode, 0)

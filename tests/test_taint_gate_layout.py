@@ -1,14 +1,14 @@
 """The taint gate is split into modules (audit 16) without changing behaviour or the start-up budget; each load
 computes its own paths (tests reload it with different env)."""
+
 import ast
-import sys
 import json
 import os
 import shutil
 import subprocess
-import pytest
-from pathlib import Path
+import sys
 
+import pytest
 from test_taint_gate import HOOK, load_hook_module
 
 HOOKS = HOOK.parent
@@ -55,12 +55,20 @@ def test_broken_submodule_fails_closed(tmp_path, module, broken, tool):
     else:
         target.write_text("raise RuntimeError('broken module')\n")
     state = tmp_path / "state"
-    payload = dict(hook_event_name="PreToolUse", session_id="broken-import",
-                   tool_name=tool, tool_input={"command": "sudo id"} if tool == "Bash"
-                   else {"file_path": "/tmp/input"})
-    result = subprocess.run([sys.executable, "-I", "-S", str(hooks / HOOK.name)],
-                            input=json.dumps(payload), text=True, capture_output=True,
-                            env=dict(os.environ, TAINT_STATE_DIR=str(state), TAINT_SWITCH=str(tmp_path / "no-switch")), timeout=10)
+    payload = dict(
+        hook_event_name="PreToolUse",
+        session_id="broken-import",
+        tool_name=tool,
+        tool_input={"command": "sudo id"} if tool == "Bash" else {"file_path": "/tmp/input"},
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-S", str(hooks / HOOK.name)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+        env=dict(os.environ, TAINT_STATE_DIR=str(state), TAINT_SWITCH=str(tmp_path / "no-switch")),
+        timeout=10,
+    )
     assert result.returncode == 0, result.stderr
     assert "Traceback" not in result.stderr
     if tool == "Bash":
@@ -73,8 +81,13 @@ def test_broken_submodule_fails_closed(tmp_path, module, broken, tool):
         assert list(state.glob("*.tainted")), "P13 must persist unknown read state"
         shutil.copyfile(HOOKS / target.name, target)
         payload.update(tool_name="Bash", tool_input={"command": "sudo id"})
-        repaired = subprocess.run([sys.executable, "-I", "-S", str(hooks / HOOK.name)],
-                                  input=json.dumps(payload), text=True, capture_output=True,
-                                  env=dict(os.environ, TAINT_STATE_DIR=str(state), TAINT_SWITCH=str(tmp_path / "no-switch")), timeout=10)
+        repaired = subprocess.run(
+            [sys.executable, "-I", "-S", str(hooks / HOOK.name)],
+            input=json.dumps(payload),
+            text=True,
+            capture_output=True,
+            env=dict(os.environ, TAINT_STATE_DIR=str(state), TAINT_SWITCH=str(tmp_path / "no-switch")),
+            timeout=10,
+        )
         assert repaired.returncode == 0, repaired.stderr
         assert json.loads(repaired.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"

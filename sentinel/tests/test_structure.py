@@ -1,5 +1,6 @@
 """Structure rules for sentinel/ (audit 17, 20): functions <= 50 lines, limits of untrusted text and timeouts are
 named constants."""
+
 import ast
 import re
 import unittest

@@ -5,6 +5,7 @@ pair of surrounding quotes; no shell code is ever executed). A variable that is 
 environment wins, so cron needs only SENTINEL_ATLAS and systemd's EnvironmentFile= gives the same result.
 SENTINEL_ATLAS itself selects where the file is, so setting it inside the file has no effect.
 """
+
 import os
 import re
 from pathlib import Path

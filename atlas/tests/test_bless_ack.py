@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """bless and ack leave a trail outside the agent: a bus event and a notice to the human (audit 1c, 6);
 check without a baseline is UNKNOWN and never creates one (audit 7). Temp dirs and a notify stub only."""
+
 import hashlib
 import io
 import json
@@ -19,8 +20,12 @@ ATLAS = HERE.parent
 sys.path.insert(0, str(HERE))
 from test_state_dir import load  # noqa: E402
 
-SNAP = {"generated_at": "2026-10-29T10:00:00Z", "host": {"kernel": "6.1"}, "accounts": {"root": {"uid": 0}},
-        "vitals": {"measure_errors": {}, "certs_error": "", "silent_unknown": {}}}
+SNAP = {
+    "generated_at": "2026-10-29T10:00:00Z",
+    "host": {"kernel": "6.1"},
+    "accounts": {"root": {"uid": 0}},
+    "vitals": {"measure_errors": {}, "certs_error": "", "silent_unknown": {}},
+}
 NO_BASELINE = "no baseline yet — review `atlas.py show` and run `bless`"
 
 
@@ -32,22 +37,31 @@ class Case(unittest.TestCase):
         stub = self.tmp / "notify-stub"
         stub.write_text('#!/bin/sh\nprintf "%%s\\n%%s\\n==\\n" "$1" "$2" >> "%s"\n' % self.notices)
         stub.chmod(0o755)
-        self.env = {"SENTINEL_ATLAS": str(self.tmp), "SENTINEL_NOTIFY_CMD": str(stub), "SENTINEL_EMAIL": "",
-                    "SENTINEL_LANG": "en", "SUDO_USER": "ops"}
+        self.env = {
+            "SENTINEL_ATLAS": str(self.tmp),
+            "SENTINEL_NOTIFY_CMD": str(stub),
+            "SENTINEL_EMAIL": "",
+            "SENTINEL_LANG": "en",
+            "SUDO_USER": "ops",
+        }
 
     def main(self, cmd, snap=None):
         m = load(ATLAS / "atlas.py", "atlas_bless_ack", self.env)
         if snap is not None:
             m.snapshot = lambda: json.loads(json.dumps(snap))
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch.dict(os.environ, self.env), mock.patch.object(sys, "argv", ["atlas.py", cmd]), \
-                redirect_stdout(out), redirect_stderr(err):
+        with (
+            mock.patch.dict(os.environ, self.env),
+            mock.patch.object(sys, "argv", ["atlas.py", cmd]),
+            redirect_stdout(out),
+            redirect_stderr(err),
+        ):
             rc = m.main()
         return rc, out.getvalue(), err.getvalue()
 
     def bus(self):
         p = self.tmp / "events.jsonl"
-        return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+        return [json.loads(ln) for ln in p.read_text().splitlines()] if p.exists() else []
 
     def notice_list(self):
         return self.notices.read_text().split("==\n")[:-1] if self.notices.exists() else []
@@ -133,9 +147,13 @@ class TestMalformedChannel(Case):
     def test_notify_crash_never_escapes(self):
         self.main("snap", SNAP)
         m = load(ATLAS / "atlas.py", "atlas_notify_crash", self.env)
-        with mock.patch.object(m.notify, "send_or_queue", side_effect=RuntimeError("boom")), \
-                mock.patch.dict(os.environ, self.env), mock.patch.object(sys, "argv", ["atlas.py", "bless"]), \
-                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+        with (
+            mock.patch.object(m.notify, "send_or_queue", side_effect=RuntimeError("boom")),
+            mock.patch.dict(os.environ, self.env),
+            mock.patch.object(sys, "argv", ["atlas.py", "bless"]),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()) as err,
+        ):
             rc = m.main()
         self.assertEqual(rc, 0)
         self.assertIn("not notified", err.getvalue())
@@ -175,9 +193,13 @@ class TestAck(Case):
                 (self.tmp / "ALERT").write_bytes(b"2026-10-29T11:00:00Z\n== CRON JOBS ==\nnew\n")
                 os.utime(self.tmp / "ALERT", (later, later))
 
-        with mock.patch.object(m, "atomic_write_text", side_effect=write_then_patrol_rewrites), \
-                mock.patch.dict(os.environ, self.env), mock.patch.object(sys, "argv", ["atlas.py", "ack"]), \
-                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        with (
+            mock.patch.object(m, "atomic_write_text", side_effect=write_then_patrol_rewrites),
+            mock.patch.dict(os.environ, self.env),
+            mock.patch.object(sys, "argv", ["atlas.py", "ack"]),
+            redirect_stdout(io.StringIO()),
+            redirect_stderr(io.StringIO()),
+        ):
             rc = m.main()
         self.assertEqual(rc, 3)
         self.assertLess((self.tmp / "ALERT.acked").stat().st_mtime, (self.tmp / "ALERT").stat().st_mtime)
@@ -185,8 +207,11 @@ class TestAck(Case):
 
     def test_entry_changes_to_the_state_dir(self):
         m = load(ATLAS / "atlas.py", "atlas_entry", self.env)
-        with mock.patch.object(m.os, "chdir") as ch, mock.patch.object(m, "main", return_value=0), \
-                self.assertRaises(SystemExit):
+        with (
+            mock.patch.object(m.os, "chdir") as ch,
+            mock.patch.object(m, "main", return_value=0),
+            self.assertRaises(SystemExit),
+        ):
             m.entry()
         ch.assert_called_once_with(m.BASE)
 

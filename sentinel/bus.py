@@ -8,6 +8,7 @@
 Every path is overridable by env (tests never touch production):
     SENTINEL_ATLAS (dir), SENTINEL_BUS, SENTINEL_BUS_LOCK, SENTINEL_BUS_MAX_BYTES
 """
+
 import argparse
 import fcntl
 import hashlib
@@ -18,7 +19,7 @@ import re
 import stat
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 SEVERITIES = ["info", "warning", "alert", "critical"]
@@ -41,8 +42,9 @@ _TS_PATTERNS = [
 
 # Sensors whose `what` text is written by this product, never copied from attacker-controlled input.
 # Everything else is shown to the agent by identifier only when redaction is on (audit 3).
-TRUSTED_TEXT_SENSORS = frozenset({"atlas.patrol", "systemd.unit-failed", "stream.source-unreadable",
-                                  "sentinel.wake-limit"})
+TRUSTED_TEXT_SENSORS = frozenset(
+    {"atlas.patrol", "systemd.unit-failed", "stream.source-unreadable", "sentinel.wake-limit"}
+)
 SENSOR_NAME = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 DEFAULT_WAKE_MAX_PER_HOUR = 12
 
@@ -136,7 +138,7 @@ def validate(ev):
 
 
 def now_iso():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _rotate(path):
@@ -327,7 +329,11 @@ def format_line(ev, redact=False):
         hhmm = "--:--"
     if _untrusted(ev, redact):
         return "%s %s %s: untrusted text not shown, see the bus [%s]" % (
-            hhmm, ev["severity"].upper(), _safe_sensor(ev), display_key(ev, True))
+            hhmm,
+            ev["severity"].upper(),
+            _safe_sensor(ev),
+            display_key(ev, True),
+        )
     return "%s %s %s: %s [%s]" % (hhmm, ev["severity"].upper(), ev["sensor"], ev["what"], ev["fingerprint"])
 
 
@@ -350,7 +356,7 @@ class WakeLimiter:
         self.admitted = 0
         self.suppressed = 0
         self.first = ""
-        self.summary_sent = False   # a summary for this window was already shown (replay or follower)
+        self.summary_sent = False  # a summary for this window was already shown (replay or follower)
         self._closed = None
 
     def _close_if_over(self):
@@ -396,10 +402,10 @@ class SharedWakeBudget:
 
     def __init__(self, max_per_hour, state_dir, window_s=3600, clock=time.time):
         self.max, self.dir, self.window, self.clock = max_per_hour, Path(state_dir), window_s, clock
-        self.problem = ""        # set once when the state is unusable; the caller prints it
+        self.problem = ""  # set once when the state is unusable; the caller prints it
         self._reported = False
-        self._mem = None        # in-memory fallback state while the file is unusable
-        self.deadline = None    # when the window this process last saw closes; None = nothing to wait for
+        self._mem = None  # in-memory fallback state while the file is unusable
+        self.deadline = None  # when the window this process last saw closes; None = nothing to wait for
 
     def take_problem(self):
         if self.problem and not self._reported:
@@ -417,12 +423,16 @@ class SharedWakeBudget:
         lim = WakeLimiter(self.max, self.window, clock=self.clock)
         start = st.get("start")
         if start is not None:
-            if isinstance(start, bool) or not isinstance(start, (int, float)) or not math.isfinite(start) \
-                    or start > self.clock() + 3600:
+            if (
+                isinstance(start, bool)
+                or not isinstance(start, (int, float))
+                or not math.isfinite(start)
+                or start > self.clock() + 3600
+            ):
                 raise ValueError("bad start")
         lim.start = start
         lim.admitted = self._int(st.get("count", 0), 0, max(self.max, 1) * 10)
-        lim.suppressed = self._int(st.get("suppressed", 0), 0, 10 ** 9)
+        lim.suppressed = self._int(st.get("suppressed", 0), 0, 10**9)
         first = st.get("first", "")
         if not isinstance(first, str) or len(first) > 64:
             raise ValueError("bad first")
@@ -435,20 +445,32 @@ class SharedWakeBudget:
         if c is not None:
             if not isinstance(c, list) or len(c) != 2 or not isinstance(c[1], str) or len(c[1]) > 64:
                 raise ValueError("bad closed")
-            lim._closed = (self._int(c[0], 0, 10 ** 9), c[1])
+            lim._closed = (self._int(c[0], 0, 10**9), c[1])
         return lim
 
     @staticmethod
     def _dump(lim):
-        return {"start": lim.start, "count": lim.admitted, "suppressed": lim.suppressed, "first": lim.first,
-                "summary_sent": lim.summary_sent, "closed": list(lim._closed) if lim._closed else None}
+        return {
+            "start": lim.start,
+            "count": lim.admitted,
+            "suppressed": lim.suppressed,
+            "first": lim.first,
+            "summary_sent": lim.summary_sent,
+            "closed": list(lim._closed) if lim._closed else None,
+        }
 
     def _exhausted(self, why):
         if not self.problem:
             self.problem = why
         if self._mem is None:
-            self._mem = {"start": self.clock(), "count": self.max, "suppressed": 0, "first": "",
-                         "summary_sent": False, "closed": None}
+            self._mem = {
+                "start": self.clock(),
+                "count": self.max,
+                "suppressed": 0,
+                "first": "",
+                "summary_sent": False,
+                "closed": None,
+            }
         return self._mem
 
     def _run(self, op):
@@ -477,7 +499,9 @@ class SharedWakeBudget:
                 self._mem = None
                 return result
         except (OSError, UnsafeStateDir) as e:
-            lim = self._limiter(self._exhausted("wake budget state unusable (%s)" % getattr(e, "code", type(e).__name__)))
+            lim = self._limiter(
+                self._exhausted("wake budget state unusable (%s)" % getattr(e, "code", type(e).__name__))
+            )
             result = op(lim)
             self._mem = self._dump(lim)
             self._remember(lim)
@@ -498,11 +522,13 @@ class SharedWakeBudget:
 
     def claim_summary(self):
         """True for exactly one caller per window with suppressed events (the one who may print the summary)."""
+
         def op(lim):
             if lim.suppressed and not lim.summary_sent:
                 lim.summary_sent = True
                 return True
             return False
+
         return self._run(op)
 
 
@@ -516,13 +542,17 @@ def cmd_follow(args):
         rolled = limiter.roll() if limiter else None
         problem = limiter.take_problem() if limiter else ""
         if problem:
-            print("%s ALERT sentinel.wake-limit: %s; no events shown this hour (limit %d/h), see events.jsonl "
-                  "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), problem, limit),
-                  flush=True)
+            print(
+                "%s ALERT sentinel.wake-limit: %s; no events shown this hour (limit %d/h), see events.jsonl "
+                "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), problem, limit),
+                flush=True,
+            )
         if rolled:
-            print("%s ALERT sentinel.wake-limit: %d event(s) not shown in the last hour (limit %d/h) "
-                  "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), rolled[0], limit),
-                  flush=True)
+            print(
+                "%s ALERT sentinel.wake-limit: %d event(s) not shown in the last hour (limit %d/h) "
+                "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), rolled[0], limit),
+                flush=True,
+            )
 
     for ev in follow_events(from_end=args.from_end, on_idle=on_idle):
         if validate(ev) or SEVERITIES.index(ev["severity"]) < floor:
@@ -546,8 +576,8 @@ def _replay_seen(seen_file):
     """(display key -> time shown, failure): `failure` is the error class name when the list could not be read."""
     done, failure = {}, ""
     try:
-        for l in open(seen_file).read().splitlines():
-            t, _, key = l.partition(" ")
+        for ln in open(seen_file).read().splitlines():
+            t, _, key = ln.partition(" ")
             done[key] = float(t)
     except (OSError, ValueError) as e:
         failure = type(e).__name__
@@ -558,14 +588,19 @@ def _replay_summary(limiter, suppressed, limit, state_failure):
     """Print the replay's closing notices (budget problem, unsaved state, suppressed count); returns state_failure."""
     problem = limiter.take_problem() if limiter else ""
     if problem:
-        print("%s ALERT sentinel.wake-limit: %s; no events shown this hour (limit %d/h), see events.jsonl "
-              "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), problem, limit), flush=True)
+        print(
+            "%s ALERT sentinel.wake-limit: %s; no events shown this hour (limit %d/h), see events.jsonl "
+            "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), problem, limit),
+            flush=True,
+        )
     if state_failure:
         print("ATLAS SENSOR: replay state not saved (%s); events may repeat" % state_failure, flush=True)
     if suppressed and limiter.claim_summary():
-        print("%s ALERT sentinel.wake-limit: %d more event(s) not shown (limit %d/h), see events.jsonl "
-              "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), suppressed, limit),
-              flush=True)
+        print(
+            "%s ALERT sentinel.wake-limit: %d more event(s) not shown (limit %d/h), see events.jsonl "
+            "[sentinel.wake-limit]" % (datetime.now(UTC).strftime("%H:%M"), suppressed, limit),
+            flush=True,
+        )
     return state_failure
 
 
@@ -589,8 +624,8 @@ def cmd_replay(args):
     limit = wake_max_per_hour()
     limiter = SharedWakeBudget(limit, wake_state_dir(path)) if limit > 0 else None
     suppressed = 0
-    for l in data.decode("utf-8", "replace").splitlines():
-        ev = _parse(l)
+    for ln in data.decode("utf-8", "replace").splitlines():
+        ev = _parse(ln)
         if not ev or validate(ev) or ev["severity"] not in ("alert", "critical"):
             continue
         key = display_key(ev, args.redact_untrusted)

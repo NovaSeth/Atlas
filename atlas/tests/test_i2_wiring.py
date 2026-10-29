@@ -5,6 +5,7 @@ Nothing here touches real state, mails, or does real HTTP: the bus CLI is a stub
 (SENTINEL_BUS_CMD), the fetcher is a stub (HTTP_FETCH_CMD), the extra-URL lookup is a stub
 (HTTP_EXTRA_URLS_CMD).
 """
+
 import json
 import os
 import shutil
@@ -20,14 +21,14 @@ HERE = Path(__file__).resolve().parent
 ATLAS = HERE.parent
 ROOT = ATLAS.parent
 sys.path.insert(0, str(HERE))
-from test_iteration1 import make_patrol, patrol, Collector  # noqa: E402
+from test_iteration1 import Collector, make_patrol, patrol  # noqa: E402
 
 PROBES = ATLAS / "sensors" / "http_probes.py"
 ESC = ROOT / "sentinel" / "escalation.sh"
 
 # Stub bus: `emit --json X` appends X to $BUS_LOG; `follow ...` records its args and then
 # prints every new line of $BUS_FEED (poll), so the session sensor merge can be observed.
-STUB_BUS = r'''#!/usr/bin/env python3
+STUB_BUS = r"""#!/usr/bin/env python3
 import os, sys, time
 log = os.environ["BUS_LOG"]
 if sys.argv[1] == "emit":
@@ -50,7 +51,7 @@ if sys.argv[1] == "follow":
             print(l, flush=True)
         seen = len(lines)
         time.sleep(0.1)
-'''
+"""
 
 
 def stub_bus(d):
@@ -61,7 +62,7 @@ def stub_bus(d):
 
 def events(log):
     p = Path(log)
-    return [json.loads(l) for l in p.read_text().splitlines()] if p.exists() else []
+    return [json.loads(ln) for ln in p.read_text().splitlines()] if p.exists() else []
 
 
 class TestAtomicAlert(unittest.TestCase):
@@ -90,6 +91,7 @@ class TestAtomicAlert(unittest.TestCase):
                 if not b:
                     bad.append("empty")
                 time.sleep(0.0005)  # still catches a truncation window; yields the single vCPU
+
         t = threading.Thread(target=reader, daemon=True)
         t.start()
         try:
@@ -130,8 +132,14 @@ class TestPatrolEmit(unittest.TestCase):
 
     def test_second_section_emits_only_the_new_one(self):
         patrol(self.d, STUB_CHECK_OUT="ATLAS: A", STUB_CHECK_RC=1, **self.env)
-        patrol(self.d, STUB_CHECK_OUT="ATLAS: A", STUB_CHECK_RC=1,
-               STUB_SILENT_OUT="  x.service failed", STUB_SILENT_RC=1, **self.env)
+        patrol(
+            self.d,
+            STUB_CHECK_OUT="ATLAS: A",
+            STUB_CHECK_RC=1,
+            STUB_SILENT_OUT="  x.service failed",
+            STUB_SILENT_RC=1,
+            **self.env,
+        )
         ev = events(self.log)
         self.assertEqual(len(ev), 2, ev)
         self.assertIn("SILENT", ev[1]["fingerprint"])
@@ -170,7 +178,7 @@ class TestPatrolEmit(unittest.TestCase):
 
 
 # Stub follower that honours --from-end against the real bus file (like bus.py would).
-STUB_FILE_BUS = r'''#!/usr/bin/env python3
+STUB_FILE_BUS = r"""#!/usr/bin/env python3
 import json, os, sys, time
 bus = os.environ["BUS_FILE"]
 if sys.argv[1] != "follow":
@@ -186,13 +194,24 @@ while True:
         print("10:00 %s %s: %s [%s]" % (e["severity"].upper(), e["sensor"], e["what"], e["fingerprint"]), flush=True)
     pos += len(data[:cut].encode())
     time.sleep(0.1)
-'''
+"""
 
 
 class TestSessionSensorGap(unittest.TestCase):
     def ev(self, fp):
-        return json.dumps({"ts": "2026-10-22T10:00:00Z", "sensor": "atlas.patrol", "severity": "alert",
-                           "confidence": "measured", "what": "w-" + fp, "fingerprint": fp}) + "\n"
+        return (
+            json.dumps(
+                {
+                    "ts": "2026-10-22T10:00:00Z",
+                    "sensor": "atlas.patrol",
+                    "severity": "alert",
+                    "confidence": "measured",
+                    "what": "w-" + fp,
+                    "fingerprint": fp,
+                }
+            )
+            + "\n"
+        )
 
     def test_event_during_follower_gap_is_printed_exactly_once(self):
         d = Path(tempfile.mkdtemp(prefix="sensor-gap-"))
@@ -201,11 +220,18 @@ class TestSessionSensorGap(unittest.TestCase):
         stub.write_text(STUB_FILE_BUS)
         bus = d / "events.jsonl"
         bus.write_text(self.ev("old"))
-        env = dict(os.environ, SENTINEL_ATLAS=str(d), SENTINEL_ESCALATION_LOG=str(d / "esc.log"),
-                   SENTINEL_INTERVAL="0.2", SENTINEL_FOLLOW_RETRY="2", BUS_FILE=str(bus),
-                   SENTINEL_BUS_CMD="python3 %s" % stub)
-        p = subprocess.Popen(["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env,
-                             stdout=subprocess.PIPE, text=True)
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(d),
+            SENTINEL_ESCALATION_LOG=str(d / "esc.log"),
+            SENTINEL_INTERVAL="0.2",
+            SENTINEL_FOLLOW_RETRY="2",
+            BUS_FILE=str(bus),
+            SENTINEL_BUS_CMD="python3 %s" % stub,
+        )
+        p = subprocess.Popen(
+            ["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env, stdout=subprocess.PIPE, text=True
+        )
         self.addCleanup(p.kill)
         k = Collector(p)
         time.sleep(1.0)
@@ -215,8 +241,8 @@ class TestSessionSensorGap(unittest.TestCase):
         subprocess.run(["pkill", "-f", str(stub)])
         time.sleep(0.5)
         with open(bus, "a") as f:
-            f.write(self.ev("gap"))   # appended while no follower runs
-        time.sleep(4.5)               # retry sleep + restart
+            f.write(self.ev("gap"))  # appended while no follower runs
+        time.sleep(4.5)  # retry sleep + restart
         with open(bus, "a") as f:
             f.write(self.ev("after"))
         time.sleep(1.0)
@@ -231,14 +257,21 @@ class TestSessionSensorBus(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.d, True)
         self.feed = self.d / "feed.txt"
         self.log = self.d / "bus.log"
-        env = dict(os.environ, SENTINEL_ATLAS=str(self.d), SENTINEL_ESCALATION_LOG=str(self.d / "esc.log"),
-                   SENTINEL_INTERVAL="0.2", BUS_LOG=str(self.log), BUS_FEED=str(self.feed))
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(self.d),
+            SENTINEL_ESCALATION_LOG=str(self.d / "esc.log"),
+            SENTINEL_INTERVAL="0.2",
+            BUS_LOG=str(self.log),
+            BUS_FEED=str(self.feed),
+        )
         if bus_cmd:
             env["SENTINEL_BUS_CMD"] = bus_cmd
         else:
             env.pop("SENTINEL_BUS_CMD", None)
-        p = subprocess.Popen(["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env,
-                             stdout=subprocess.PIPE, text=True)
+        p = subprocess.Popen(
+            ["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env, stdout=subprocess.PIPE, text=True
+        )
         self.addCleanup(p.kill)
         self.proc = p
         return Collector(p)
@@ -285,17 +318,27 @@ class TestEscalationStream(unittest.TestCase):
         for d in (self.atlas, self.bin, self.atlas / "pauses"):
             d.mkdir()
         self.mails = self.tmp / "mails.txt"
-        for n, body in (("mail", 'echo "MAIL $*" >> %s; cat >/dev/null' % self.mails),
-                        ("screen", 'echo "1.agent (Attached)"'), ("systemctl", "exit 0")):
+        for n, body in (
+            ("mail", 'echo "MAIL $*" >> %s; cat >/dev/null' % self.mails),
+            ("screen", 'echo "1.agent (Attached)"'),
+            ("systemctl", "exit 0"),
+        ):
             (self.bin / n).write_text("#!/bin/bash\n%s\n" % body)
             (self.bin / n).chmod(0o755)
         (self.atlas / "heartbeat.log").write_text("x ok\n")
         self.hb = self.tmp / "stream.heartbeat"
 
     def run_esc(self):
-        env = dict(os.environ, SENTINEL_ATLAS=str(self.atlas), SENTINEL_STATE=str(self.state),
-                   SENTINEL_EMAIL="nobody@example.com", SENTINEL_RESIDENT_SCREEN="agent", SENTINEL_RESIDENT_UNIT="agent.service",
-                   SENTINEL_STREAM_HEARTBEAT=str(self.hb), PATH="%s:%s" % (self.bin, os.environ["PATH"]))
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(self.atlas),
+            SENTINEL_STATE=str(self.state),
+            SENTINEL_EMAIL="nobody@example.com",
+            SENTINEL_RESIDENT_SCREEN="agent",
+            SENTINEL_RESIDENT_UNIT="agent.service",
+            SENTINEL_STREAM_HEARTBEAT=str(self.hb),
+            PATH="%s:%s" % (self.bin, os.environ["PATH"]),
+        )
         return subprocess.run(["bash", str(ESC)], env=env, capture_output=True, text=True, timeout=60)
 
     def log(self):
@@ -339,8 +382,10 @@ class TestHttpProbes(unittest.TestCase):
         self.sites = self.tmp / "sites"
         self.sites.mkdir()
         (self.sites / "a.conf").write_text("<VirtualHost *:443>\n    ServerName a.example.net\n</VirtualHost>\n")
-        (self.sites / "a-80.conf").write_text("<VirtualHost *:80>\n    ServerName a.example.net\n</VirtualHost>\n"
-                                              "<VirtualHost *:80>\n    ServerName b.example.net\n</VirtualHost>\n")
+        (self.sites / "a-80.conf").write_text(
+            "<VirtualHost *:80>\n    ServerName a.example.net\n</VirtualHost>\n"
+            "<VirtualHost *:80>\n    ServerName b.example.net\n</VirtualHost>\n"
+        )
         self.expected = self.tmp / "expected.json"
         self.expected.write_text(json.dumps({"a.example.net": [200], "b.example.net": [301, 302]}))
         # stub fetcher: prints the status for the URL from $CODES (json), exit 1 for "ERR"
@@ -348,15 +393,24 @@ class TestHttpProbes(unittest.TestCase):
             "import json, os, sys\n"
             "c = json.loads(os.environ['CODES'])[sys.argv[1]]\n"
             "if c == 'ERR':\n    print('connection refused', file=sys.stderr); sys.exit(1)\n"
-            "print(c)\n")
-        self.codes = {"https://a.example.net/": 200, "https://b.example.net/": 301,
-                      "https://example.net/blog/post-1/": 200}
+            "print(c)\n"
+        )
+        self.codes = {
+            "https://a.example.net/": 200,
+            "https://b.example.net/": 301,
+            "https://example.net/blog/post-1/": 200,
+        }
 
     def run_probe(self, article="https://example.net/blog/post-1/", article_rc=0, **over):
         codes = dict(self.codes, **over)
-        env = dict(os.environ, HTTP_SITES_DIR=str(self.sites), HTTP_EXPECTED=str(self.expected),
-                   HTTP_FETCH_CMD="python3 %s" % (self.tmp / "fetch.py"), CODES=json.dumps(codes),
-                   HTTP_EXTRA_URLS_CMD="echo %s; exit %d" % (article, article_rc))
+        env = dict(
+            os.environ,
+            HTTP_SITES_DIR=str(self.sites),
+            HTTP_EXPECTED=str(self.expected),
+            HTTP_FETCH_CMD="python3 %s" % (self.tmp / "fetch.py"),
+            CODES=json.dumps(codes),
+            HTTP_EXTRA_URLS_CMD="echo %s; exit %d" % (article, article_rc),
+        )
         return subprocess.run([sys.executable, str(PROBES)], env=env, capture_output=True, text=True, timeout=60)
 
     def test_all_match_is_zero(self):
@@ -394,21 +448,27 @@ class TestHttpProbes(unittest.TestCase):
         self.assertEqual(self.run_probe().returncode, 2)
 
     def test_extra_urls_from_config_key(self):
-        cfg = {"a.example.net": [200], "b.example.net": [301, 302],
-               "_extra_urls_cmd": "printf 'https://example.net/one/\\nhttps://example.net/two/\\n'"}
+        cfg = {
+            "a.example.net": [200],
+            "b.example.net": [301, 302],
+            "_extra_urls_cmd": "printf 'https://example.net/one/\\nhttps://example.net/two/\\n'",
+        }
         self.expected.write_text(json.dumps(cfg))
-        env = dict(os.environ, HTTP_SITES_DIR=str(self.sites), HTTP_EXPECTED=str(self.expected),
-                   HTTP_FETCH_CMD="python3 %s" % (self.tmp / "fetch.py"),
-                   CODES=json.dumps(dict(self.codes, **{"https://example.net/one/": 200,
-                                                         "https://example.net/two/": 500})))
+        env = dict(
+            os.environ,
+            HTTP_SITES_DIR=str(self.sites),
+            HTTP_EXPECTED=str(self.expected),
+            HTTP_FETCH_CMD="python3 %s" % (self.tmp / "fetch.py"),
+            CODES=json.dumps(dict(self.codes, **{"https://example.net/one/": 200, "https://example.net/two/": 500})),
+        )
         env.pop("HTTP_EXTRA_URLS_CMD", None)
         env.pop("HTTP_ARTICLE_CMD", None)
         r = subprocess.run([sys.executable, str(PROBES)], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("example.net/two/", r.stdout)
         self.assertNotIn("example.net/one/", r.stdout)
-        self.assertNotIn("_extra_urls_cmd", r.stdout + r.stderr)   # a config key is never a host
-        cfg["_extra_urls_cmd"] = ""                                  # empty = no extra URLs
+        self.assertNotIn("_extra_urls_cmd", r.stdout + r.stderr)  # a config key is never a host
+        cfg["_extra_urls_cmd"] = ""  # empty = no extra URLs
         self.expected.write_text(json.dumps(cfg))
         r = subprocess.run([sys.executable, str(PROBES)], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
@@ -433,7 +493,8 @@ class TestHttpProbes(unittest.TestCase):
         d = make_patrol()
         self.addCleanup(shutil.rmtree, d, True)
         (d / "sensors" / "http_probes.py").write_text(
-            "import sys; print('a.example.net: 500, expected 200'); sys.exit(1)\n")
+            "import sys; print('a.example.net: 500, expected 200'); sys.exit(1)\n"
+        )
         patrol(d)
         txt = (d / "ALERT").read_text()
         self.assertIn("== HTTP PROBES ==", txt)

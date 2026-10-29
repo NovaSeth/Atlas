@@ -5,6 +5,7 @@ logged "no recipient configured" and exited 2, so the unit failed every 10 minut
 And an unacknowledged alarm went out under the subject "silence in the supervision layer".
 Everything runs in a temp dir with stubs: no real mail, no real state.
 """
+
 import os
 import shutil
 import subprocess
@@ -40,10 +41,18 @@ class EscalationRecipient(unittest.TestCase):
         self.hb.touch()
 
     def run_esc(self, email="", notify=""):
-        env = dict(os.environ, SENTINEL_ATLAS=str(self.atlas), SENTINEL_STATE=str(self.state),
-                   SENTINEL_EMAIL=email, SENTINEL_NOTIFY_CMD=notify, SENTINEL_LANG="en",
-                   SENTINEL_RESIDENT_UNIT="", SENTINEL_RESIDENT_SCREEN="",
-                   SENTINEL_STREAM_HEARTBEAT=str(self.hb), PATH="%s:%s" % (self.bin, os.environ["PATH"]))
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(self.atlas),
+            SENTINEL_STATE=str(self.state),
+            SENTINEL_EMAIL=email,
+            SENTINEL_NOTIFY_CMD=notify,
+            SENTINEL_LANG="en",
+            SENTINEL_RESIDENT_UNIT="",
+            SENTINEL_RESIDENT_SCREEN="",
+            SENTINEL_STREAM_HEARTBEAT=str(self.hb),
+            PATH="%s:%s" % (self.bin, os.environ["PATH"]),
+        )
         r = subprocess.run(["bash", str(ESC)], env=env, capture_output=True, text=True, timeout=60)
         log = (self.state / "escalation.log").read_text() if (self.state / "escalation.log").exists() else ""
         return r.returncode, log.strip().splitlines()[-1] if log.strip() else ""

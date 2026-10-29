@@ -4,6 +4,7 @@
 repeat wrongly, and the escalation log is a machine log in English. Nothing here touches
 a real state directory, real sudo, certbot, journalctl or mail.
 """
+
 import json
 import os
 import shutil
@@ -20,24 +21,24 @@ ATLAS = HERE.parent
 ROOT = ATLAS.parent
 sys.path.insert(0, str(ATLAS))
 sys.path.insert(0, str(HERE))
-import atlas  # noqa: E402
-from test_iteration1 import make_patrol, patrol, Collector, write_atomic  # noqa: E402
+from test_iteration1 import Collector, make_patrol, patrol, write_atomic  # noqa: E402
 
-HEALTHY_CERT = ("Certificate Name: ok.example\n"
-                "    Expiry Date: 2027-01-01 00:00:00+00:00 (VALID: 60 days)\n")
-EXPIRED_CERT = ("Certificate Name: expired.example\n"
-                "    Expiry Date: 2026-10-01 00:00:00+00:00 (INVALID: EXPIRED)\n")
+import atlas  # noqa: E402
+
+HEALTHY_CERT = "Certificate Name: ok.example\n    Expiry Date: 2027-01-01 00:00:00+00:00 (VALID: 60 days)\n"
+EXPIRED_CERT = "Certificate Name: expired.example\n    Expiry Date: 2026-10-01 00:00:00+00:00 (INVALID: EXPIRED)\n"
 
 
 def snap(certs, cert_error=""):
-    return {"certs": certs,
-            "vitals": {"disk_used_pct": "41%", "mem_available_mb": "3700", "certs_error": cert_error}}
+    return {"certs": certs, "vitals": {"disk_used_pct": "41%", "mem_available_mb": "3700", "certs_error": cert_error}}
 
 
 class TestCerts(unittest.TestCase):
     def measure(self, rc, out):
-        with mock.patch.object(atlas, "run_checked", return_value=(rc, out, "")), \
-                mock.patch.object(atlas, "have", return_value=True):
+        with (
+            mock.patch.object(atlas, "run_checked", return_value=(rc, out, "")),
+            mock.patch.object(atlas, "have", return_value=True),
+        ):
             return atlas.certs_measure()
 
     def test_certbot_not_installed_is_no_certs_not_unknown(self):
@@ -70,8 +71,7 @@ class TestCerts(unittest.TestCase):
     def test_r1_no_ssl_vhosts_is_zero_not_unknown(self):
         with mock.patch.object(atlas, "run_checked", return_value=(0, "<VirtualHost *:80>\n", "")):
             self.assertEqual(atlas.ssl_vhost_count(self.sites("a.conf")), 0)
-        with mock.patch.object(atlas, "run_checked",
-                               return_value=(0, "<VirtualHost *:443>\n  SSLEngine on\n", "")):
+        with mock.patch.object(atlas, "run_checked", return_value=(0, "<VirtualHost *:443>\n  SSLEngine on\n", "")):
             self.assertEqual(atlas.ssl_vhost_count(self.sites("a.conf", "b.conf")), 2)
 
     def test_r1_no_apache_is_zero(self):
@@ -87,20 +87,20 @@ class TestCerts(unittest.TestCase):
         self.assertEqual(err, "")
         a, n = atlas.thresholds(snap(res, err), 2)
         self.assertEqual(n, [])
-        self.assertTrue(any("expired.example" in l for l in a), a)
-        self.assertFalse(any("ok.example" in l for l in a), a)
+        self.assertTrue(any("expired.example" in ln for ln in a), a)
+        self.assertFalse(any("ok.example" in ln for ln in a), a)
 
     def test_r2_unparseable_expiry_is_unknown_not_dropped(self):
         res, err = self.measure(0, HEALTHY_CERT + "Certificate Name: weird.example\n    Expiry Date: ???\n")
         self.assertIn("weird.example", res)
         a, n = atlas.thresholds(snap(res, err), 2)
-        self.assertTrue(any("weird.example" in l for l in n), n)
+        self.assertTrue(any("weird.example" in ln for ln in n), n)
 
     def test_r2_cert_without_expiry_line_is_unknown(self):
         res, err = self.measure(0, "Certificate Name: noexp.example\n    Domains: a.b\n")
         self.assertIn("noexp.example", res)
         a, n = atlas.thresholds(snap(res, err), 1)
-        self.assertTrue(any("noexp.example" in l for l in n), n)
+        self.assertTrue(any("noexp.example" in ln for ln in n), n)
 
 
 class TestSilentFailures(unittest.TestCase):
@@ -111,6 +111,7 @@ class TestSilentFailures(unittest.TestCase):
             if "list-timers" in cmd:
                 return timers_rc, self.TIMERS if timers_rc == 0 else "", ""
             return journal_rc, journal_out, "" if journal_rc == 0 else "journalctl: boom"
+
         return f
 
     def test_r3_journal_failure_is_unknown(self):
@@ -127,8 +128,10 @@ class TestSilentFailures(unittest.TestCase):
         self.assertEqual(unknown, {})
 
     def test_r3_success_last_line_is_clean(self):
-        j = ("2026-10-19T03:00:00+0200 h systemd[1]: certbot.service: Failed with result 'exit-code'.\n"
-             "2026-10-20T03:00:00+0200 h systemd[1]: Finished certbot.service.\n")
+        j = (
+            "2026-10-19T03:00:00+0200 h systemd[1]: certbot.service: Failed with result 'exit-code'.\n"
+            "2026-10-20T03:00:00+0200 h systemd[1]: Finished certbot.service.\n"
+        )
         with mock.patch.object(atlas, "run_checked", side_effect=self.fake(0, j)):
             self.assertEqual(atlas.silent_failures_checked(), ({}, {}))
 
@@ -138,15 +141,20 @@ class TestSilentFailures(unittest.TestCase):
         self.assertTrue(unknown)
 
     def test_r3_silent_cmd_exit_codes(self):
-        for vit, rc in (({"silent_failures": {"u": "x"}, "silent_unknown": {}}, 1),
-                        ({"silent_failures": {}, "silent_unknown": {"u": "journal"}}, 2),
-                        ({"silent_failures": {}, "silent_unknown": {}}, 0)):
+        for vit, rc in (
+            ({"silent_failures": {"u": "x"}, "silent_unknown": {}}, 1),
+            ({"silent_failures": {}, "silent_unknown": {"u": "journal"}}, 2),
+            ({"silent_failures": {}, "silent_unknown": {}}, 0),
+        ):
             d = Path(tempfile.mkdtemp())
             self.addCleanup(shutil.rmtree, d, True)
             (d / "current.json").write_text(json.dumps({"vitals": vit}))
-            with mock.patch.object(atlas, "CURRENT", str(d / "current.json")), \
-                 mock.patch.object(sys, "argv", ["atlas.py", "silent"]), \
-                 mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+            with (
+                mock.patch.object(atlas, "CURRENT", str(d / "current.json")),
+                mock.patch.object(sys, "argv", ["atlas.py", "silent"]),
+                mock.patch("sys.stdout"),
+                mock.patch("sys.stderr"),
+            ):
                 self.assertEqual(atlas.main(), rc, vit)
 
 
@@ -184,10 +192,15 @@ class SensorCase(unittest.TestCase):
     def start(self):
         self.d = Path(tempfile.mkdtemp(prefix="sensor-r2-"))
         self.addCleanup(shutil.rmtree, self.d, True)
-        env = dict(os.environ, SENTINEL_ATLAS=str(self.d), SENTINEL_ESCALATION_LOG=str(self.d / "esc.log"),
-                   SENTINEL_INTERVAL="0.2")
-        p = subprocess.Popen(["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env,
-                             stdout=subprocess.PIPE, text=True)
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(self.d),
+            SENTINEL_ESCALATION_LOG=str(self.d / "esc.log"),
+            SENTINEL_INTERVAL="0.2",
+        )
+        p = subprocess.Popen(
+            ["bash", str(ROOT / "sentinel" / "session-sensor.sh")], env=env, stdout=subprocess.PIPE, text=True
+        )
         self.addCleanup(p.kill)
         return Collector(p)
 
@@ -255,12 +268,19 @@ class TestEscalationLogR8(unittest.TestCase):
         for n, body in (("mail", "cat >/dev/null"), ("screen", "exit 1"), ("systemctl", "exit 3")):
             (bindir / n).write_text(f"#!/usr/bin/env bash\n{body}\n")
             os.chmod(bindir / n, 0o755)
-        env = dict(os.environ, PATH=f"{bindir}:{os.environ['PATH']}", SENTINEL_ATLAS=str(atl),
-                   SENTINEL_STATE=str(state), SENTINEL_EMAIL="ops@localhost",
-                   SENTINEL_RESIDENT_SCREEN="agent", SENTINEL_RESIDENT_UNIT="agent.service",
-                   SENTINEL_STREAM_HEARTBEAT=str(d / "stream.heartbeat"))  # absent = stream-silent
-        subprocess.run(["bash", str(ROOT / "sentinel" / "escalation.sh")], env=env,
-                       capture_output=True, text=True, timeout=60)
+        env = dict(
+            os.environ,
+            PATH=f"{bindir}:{os.environ['PATH']}",
+            SENTINEL_ATLAS=str(atl),
+            SENTINEL_STATE=str(state),
+            SENTINEL_EMAIL="ops@localhost",
+            SENTINEL_RESIDENT_SCREEN="agent",
+            SENTINEL_RESIDENT_UNIT="agent.service",
+            SENTINEL_STREAM_HEARTBEAT=str(d / "stream.heartbeat"),
+        )  # absent = stream-silent
+        subprocess.run(
+            ["bash", str(ROOT / "sentinel" / "escalation.sh")], env=env, capture_output=True, text=True, timeout=60
+        )
         log = (state / "escalation.log").read_text()
         self.assertIn("PROBLEM: patrol-silent", log)
         self.assertIn("resident-dead", log)

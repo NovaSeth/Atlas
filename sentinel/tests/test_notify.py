@@ -1,5 +1,6 @@
 """Notifier with an outbox: a notice that cannot go out now waits in <runtime>/outbox and the escalation timer
 delivers it (audit items 1c, 6, 10; RF1)."""
+
 import json
 import os
 import stat
@@ -8,8 +9,8 @@ import time
 import unittest
 from unittest import mock
 
+# helpers puts sentinel/ on sys.path: it must be imported before the modules below
 from helpers import SENTINEL, make_event, notify_calls, stub_notify, tmpdir
-
 import notify  # noqa: E402
 import router  # noqa: E402
 
@@ -19,8 +20,9 @@ ESC = SENTINEL / "escalation.sh"
 class Outbox(unittest.TestCase):
     def setUp(self):
         self.d = tmpdir(self)
-        p = mock.patch.dict(os.environ, {"SENTINEL_ATLAS": str(self.d), "SENTINEL_NOTIFY_CMD": "",
-                                         "SENTINEL_EMAIL": ""})
+        p = mock.patch.dict(
+            os.environ, {"SENTINEL_ATLAS": str(self.d), "SENTINEL_NOTIFY_CMD": "", "SENTINEL_EMAIL": ""}
+        )
         p.start()
         self.addCleanup(p.stop)
         os.environ.pop("SENTINEL_STATE_DIR", None)
@@ -87,18 +89,29 @@ class EscalationDrain(unittest.TestCase):
         atlas.mkdir()
         binp.mkdir()
         mails = d / "mails.txt"
-        for n, body in (("mail", 'echo "MAIL $*" >> %s; cat >/dev/null' % mails), ("screen", "exit 0"),
-                        ("systemctl", "exit 0")):
+        for n, body in (
+            ("mail", 'echo "MAIL $*" >> %s; cat >/dev/null' % mails),
+            ("screen", "exit 0"),
+            ("systemctl", "exit 0"),
+        ):
             (binp / n).write_text("#!/bin/bash\n%s\n" % body)
             (binp / n).chmod(0o755)
         (atlas / "heartbeat.log").write_text("x ok\n")
-        with mock.patch.dict(os.environ, {"SENTINEL_ATLAS": str(atlas), "SENTINEL_NOTIFY_CMD": "",
-                                          "SENTINEL_EMAIL": ""}):
+        with mock.patch.dict(
+            os.environ, {"SENTINEL_ATLAS": str(atlas), "SENTINEL_NOTIFY_CMD": "", "SENTINEL_EMAIL": ""}
+        ):
             os.environ.pop("SENTINEL_STATE_DIR", None)
             notify.send_or_queue("queued subject", "queued body", "router")
-        env = dict(os.environ, SENTINEL_ATLAS=str(atlas), SENTINEL_EMAIL="nobody@example.com",
-                   SENTINEL_NOTIFY_CMD="", SENTINEL_LANG="en", SENTINEL_RESIDENT_UNIT="",
-                   SENTINEL_RESIDENT_SCREEN="", PATH="%s:%s" % (binp, os.environ["PATH"]))
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(atlas),
+            SENTINEL_EMAIL="nobody@example.com",
+            SENTINEL_NOTIFY_CMD="",
+            SENTINEL_LANG="en",
+            SENTINEL_RESIDENT_UNIT="",
+            SENTINEL_RESIDENT_SCREEN="",
+            PATH="%s:%s" % (binp, os.environ["PATH"]),
+        )
         for k in ("SENTINEL_STATE", "SENTINEL_STATE_DIR", "SENTINEL_STREAM_HEARTBEAT"):
             env.pop(k, None)
         subprocess.run(["bash", str(ESC)], env=env, capture_output=True, text=True, timeout=90)
@@ -112,8 +125,9 @@ class DrainBudget(unittest.TestCase):
 
     def setUp(self):
         self.d = tmpdir(self)
-        p = mock.patch.dict(os.environ, {"SENTINEL_ATLAS": str(self.d), "SENTINEL_NOTIFY_CMD": "",
-                                         "SENTINEL_EMAIL": ""})
+        p = mock.patch.dict(
+            os.environ, {"SENTINEL_ATLAS": str(self.d), "SENTINEL_NOTIFY_CMD": "", "SENTINEL_EMAIL": ""}
+        )
         p.start()
         self.addCleanup(p.stop)
         os.environ.pop("SENTINEL_STATE_DIR", None)
@@ -138,6 +152,7 @@ class DrainBudget(unittest.TestCase):
         def fake(subject, body, timeout=notify.NOTIFY_TIMEOUT):
             seen.append(timeout)
             return True
+
         with mock.patch.object(notify, "send", fake):
             notify.drain(max_seconds=5)
         self.assertEqual(len(seen), 1)
@@ -154,8 +169,9 @@ class DrainDiagnostics(unittest.TestCase):
         (rt / "outbox").chmod(0o777)
         env = dict(os.environ, SENTINEL_ATLAS=str(d))
         env.pop("SENTINEL_STATE_DIR", None)
-        r = subprocess.run(["python3", str(SENTINEL / "notify.py"), "drain"], env=env, capture_output=True,
-                           text=True, timeout=30)
+        r = subprocess.run(
+            ["python3", str(SENTINEL / "notify.py"), "drain"], env=env, capture_output=True, text=True, timeout=30
+        )
         self.assertEqual(r.returncode, 1)
         self.assertIn("outbox: unusable", r.stdout)
 
@@ -169,9 +185,16 @@ class DrainDiagnostics(unittest.TestCase):
             (binp / n).write_text("#!/bin/bash\ncat >/dev/null\nexit 0\n")
             (binp / n).chmod(0o755)
         (atlas / "heartbeat.log").write_text("x ok\n")
-        env = dict(os.environ, SENTINEL_ATLAS=str(atlas), SENTINEL_EMAIL="nobody@example.com",
-                   SENTINEL_NOTIFY_CMD="", SENTINEL_LANG="en", SENTINEL_RESIDENT_UNIT="",
-                   SENTINEL_RESIDENT_SCREEN="", PATH="%s:%s" % (binp, os.environ["PATH"]))
+        env = dict(
+            os.environ,
+            SENTINEL_ATLAS=str(atlas),
+            SENTINEL_EMAIL="nobody@example.com",
+            SENTINEL_NOTIFY_CMD="",
+            SENTINEL_LANG="en",
+            SENTINEL_RESIDENT_UNIT="",
+            SENTINEL_RESIDENT_SCREEN="",
+            PATH="%s:%s" % (binp, os.environ["PATH"]),
+        )
         for k in ("SENTINEL_STATE", "SENTINEL_STATE_DIR", "SENTINEL_STREAM_HEARTBEAT"):
             env.pop(k, None)
         subprocess.run(["bash", str(ESC)], env=env, capture_output=True, text=True, timeout=90)
