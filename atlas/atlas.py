@@ -844,9 +844,9 @@ def main():
               file=sys.stderr)
         return 2
     if not os.path.exists(BASELINE):
-        write(snap, BASELINE)
-        print("baseline created (first run)")
-        return 0
+        # never an implicit baseline: whatever state the host is in on the first run would become "normal"
+        print(t("atlas.no_baseline"), file=sys.stderr)
+        return 2
     changes = shorten_packages(diff(json.load(open(BASELINE)), snap))
     if not changes:
         print("ATLAS OK - no changes")
