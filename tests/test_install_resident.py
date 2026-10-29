@@ -86,7 +86,7 @@ class InstallResident(unittest.TestCase):
     def test_bypass_adds_allow_flag_and_warning(self):
         r = self.run_install("--resident-user", "ops-test", "--permission-mode", "bypassPermissions")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("RESIDENT_EXTRA_ARGS=--allow-dangerously-skip-permissions", r.stdout)
+        self.assertIn('RESIDENT_EXTRA_ARGS="--allow-dangerously-skip-permissions"', r.stdout)
         self.assertIn("WITHOUT asking", r.stdout + r.stderr)
 
     def test_without_resident_user_prints_hint_and_no_files(self):

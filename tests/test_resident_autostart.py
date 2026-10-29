@@ -193,7 +193,7 @@ class StartScript(unittest.TestCase):
         self.assertIn(str(other), r.stderr)
 
     def test_extra_args_in_order_before_prompt(self):
-        self.write_env("RESIDENT_EXTRA_ARGS='--allow-dangerously-skip-permissions --effort high'\n")
+        self.write_env('RESIDENT_EXTRA_ARGS="--allow-dangerously-skip-permissions --effort high"\n')
         r = self.run_script("--dry-run")
         self.assertEqual(r.returncode, 0, r.stderr)
         out = r.stdout
@@ -202,6 +202,47 @@ class StartScript(unittest.TestCase):
         self.assertLess(i, out.index("--effort"))
         self.assertLess(out.index("--effort"), out.index("high"))
         self.assertLess(out.index("high"), out.index("machine"))
+
+    def test_env_unquoted_multiword_value_is_refused_and_not_executed(self):
+        marker = self.tmp / "marker"
+        stub(self.bin / "login", f"touch {marker}")
+        stub(self.bin / "--chrome", f"touch {marker}")
+        for line in ("RESIDENT_AUTH_CHECKS=codex login status", "RESIDENT_EXTRA_ARGS=--allow-x --chrome"):
+            self.write_env(line + "\n")
+            r = self.run_script("--dry-run")
+            self.assertEqual(r.returncode, 2, r.stderr)
+            self.assertIn("line 8", r.stderr)
+            self.assertIn("quote values with spaces", r.stderr)
+            self.assertFalse(marker.exists())
+
+    def test_env_quoted_multiword_values_split_into_argv(self):
+        self.write_env('RESIDENT_EXTRA_ARGS="--allow-x --chrome"\nRESIDENT_AUTH_CHECKS="true now"\n')
+        stub(self.bin / "true", "exit 0")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertLess(r.stdout.index("--allow-x"), r.stdout.index("--chrome"))
+        self.assertIn("auth check ok: true now", r.stderr)
+
+    def test_env_shell_syntax_in_value_is_refused(self):
+        marker = self.tmp / "marker"
+        for v in (f"$(touch {marker})", f"`touch {marker}`", f"a;touch {marker}", '"a $HOME"', '"x;y\\z"'):
+            self.write_env(f"RESIDENT_EXTRA_ARGS={v}\n")
+            r = self.run_script("--dry-run")
+            self.assertEqual(r.returncode, 2, (v, r.stderr))
+            self.assertFalse(marker.exists())
+
+    def test_env_unknown_key_and_bad_line_are_refused(self):
+        for line in ("FOO=bar", "lower=x", "just words"):
+            self.write_env(line + "\n")
+            r = self.run_script("--dry-run")
+            self.assertEqual(r.returncode, 2, (line, r.stderr))
+            self.assertIn("line 8", r.stderr)
+
+    def test_env_comments_blank_lines_and_tilde(self):
+        self.write_env("\n# a comment\n   \nRESIDENT_DIR=~/w\n")
+        (self.tmp / "w").mkdir()
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_empty_extra_args_add_nothing(self):
         self.write_env("RESIDENT_EXTRA_ARGS=\n")
