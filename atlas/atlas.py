@@ -990,56 +990,79 @@ def measure_errors_text(errors):
     return "\n".join(f"  {k}: {v}" for k, v in sorted(errors.items()))
 
 
-def main():
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "check"
-    if cmd == "bless":
-        return cmd_bless()
-    if cmd == "ack":
-        return cmd_ack()
-    if cmd in ("thresholds", "silent"):
-        # read-only: reads current.json written by `check` in the same patrol run
-        try:
-            snap = json.load(open(CURRENT))
-        except (OSError, ValueError) as e:
-            print(t("atlas.current_unreadable", error=e), file=sys.stderr)  # human-facing (ALERT)
-            return 2
-        if cmd == "silent":
-            # exit 0 clean, 1 failures found, 2 could not measure
-            txt, u = silent_text(snap), silent_unknown_text(snap)
-            if u:
-                print(t("atlas.silent_cannot_judge") + "\n" + u + (("\n" + txt) if txt else ""), file=sys.stderr)
-                return 2
-            if txt:
-                print(txt)
-                return 1
-            return 0
-        alarms, unknown = thresholds(snap, ssl_vhost_count())
-        for l in alarms:
-            print("  " + l)
-        for l in unknown:
-            print("  " + l, file=sys.stderr)
-        return 2 if unknown else (1 if alarms else 0)
+def load_current():
+    """(snapshot, None) from current.json, or (None, exit code 2) after printing why it is unreadable."""
+    try:
+        with open(CURRENT) as f:
+            return json.load(f), None
+    except (OSError, ValueError) as e:
+        print(t("atlas.current_unreadable", error=e), file=sys.stderr)  # human-facing (ALERT)
+        return None, 2
+
+
+def cmd_silent():
+    """Read-only. Exit 0 clean, 1 failures found, 2 could not measure."""
+    snap, rc = load_current()
+    if snap is None:
+        return rc
+    txt, u = silent_text(snap), silent_unknown_text(snap)
+    if u:
+        print(t("atlas.silent_cannot_judge") + "\n" + u + (("\n" + txt) if txt else ""), file=sys.stderr)
+        return 2
+    if txt:
+        print(txt)
+        return 1
+    return 0
+
+
+def cmd_thresholds():
+    """Read-only: reads current.json written by `check` in the same patrol run."""
+    snap, rc = load_current()
+    if snap is None:
+        return rc
+    alarms, unknown = thresholds(snap, ssl_vhost_count())
+    for l in alarms:
+        print("  " + l)
+    for l in unknown:
+        print("  " + l, file=sys.stderr)
+    return 2 if unknown else (1 if alarms else 0)
+
+
+def take_snapshot():
+    """Measure, then write current.json and the hourly copy under snapshots/."""
     snap = snapshot()
     write(snap, CURRENT)
     os.makedirs(SNAPDIR, exist_ok=True)
     write(snap, os.path.join(SNAPDIR, snap["generated_at"][:13].replace(":", "") + ".json"))
-    if cmd == "snap":
-        print("snapshot ok")
-        return 0
-    if cmd == "show":
-        v = snap["vitals"]
-        print(f"{snap['host']['os']} / {snap['host']['kernel']} / {snap['host']['ip']}  up {v['uptime']}")
-        print(t("atlas.show_disk", used=v["disk_used_pct"], avail=v["disk_avail"], mem=v["mem_available_mb"],
-                load=v["load"], bans=v["banned_sshd"]))
-        print(t("atlas.show_services", count=len(snap["services"]["running"]),
-                containers=", ".join(snap["containers"])))
-        print(t("atlas.show_vhosts", vhosts=len(snap["vhosts"]), ports=len(snap["listeners"]),
-                accounts=", ".join(snap["accounts"])))
-        for d, c in sorted(snap["certs"].items(), key=lambda x: -1 if x[1]["days"] is None else x[1]["days"])[:3]:
-            print(t("atlas.show_cert", name=d, days=c["days"] if c["days"] is not None else "?"))
-        if v.get("not_present"):
-            print(t("atlas.show_not_present", tools=", ".join(v["not_present"])))
-        return 0
+    return snap
+
+
+def cmd_snap():
+    take_snapshot()
+    print("snapshot ok")
+    return 0
+
+
+def cmd_show():
+    snap = take_snapshot()
+    v = snap["vitals"]
+    print(f"{snap['host']['os']} / {snap['host']['kernel']} / {snap['host']['ip']}  up {v['uptime']}")
+    print(t("atlas.show_disk", used=v["disk_used_pct"], avail=v["disk_avail"], mem=v["mem_available_mb"],
+            load=v["load"], bans=v["banned_sshd"]))
+    print(t("atlas.show_services", count=len(snap["services"]["running"]),
+            containers=", ".join(snap["containers"])))
+    print(t("atlas.show_vhosts", vhosts=len(snap["vhosts"]), ports=len(snap["listeners"]),
+            accounts=", ".join(snap["accounts"])))
+    for d, c in sorted(snap["certs"].items(), key=lambda x: -1 if x[1]["days"] is None else x[1]["days"])[:3]:
+        print(t("atlas.show_cert", name=d, days=c["days"] if c["days"] is not None else "?"))
+    if v.get("not_present"):
+        print(t("atlas.show_not_present", tools=", ".join(v["not_present"])))
+    return 0
+
+
+def cmd_check():
+    """Snapshot + diff against the baseline: 0 no changes, 1 changes, 2 UNKNOWN (failed measurement, no baseline)."""
+    snap = take_snapshot()
     if snap["vitals"].get("measure_errors"):
         # human-facing (lands in ALERT): a failed measurement is UNKNOWN, never an empty inventory
         print(t("atlas.measure_failed") + "\n" + measure_errors_text(snap["vitals"]["measure_errors"]),
@@ -1049,7 +1072,8 @@ def main():
         # never an implicit baseline: whatever state the host is in on the first run would become "normal"
         print(t("atlas.no_baseline"), file=sys.stderr)
         return 2
-    changes = shorten_packages(diff(json.load(open(BASELINE)), snap))
+    with open(BASELINE) as f:
+        changes = shorten_packages(diff(json.load(f), snap))
     if not changes:
         print("ATLAS OK - no changes")
         return 0
@@ -1057,6 +1081,16 @@ def main():
     for c in changes:
         print("  " + c)
     return 1
+
+
+COMMANDS = {"bless": cmd_bless, "ack": cmd_ack, "thresholds": cmd_thresholds, "silent": cmd_silent,
+            "snap": cmd_snap, "show": cmd_show, "check": cmd_check}
+
+
+def main(argv=None):
+    argv = sys.argv if argv is None else argv
+    cmd = argv[1] if len(argv) > 1 else "check"
+    return COMMANDS.get(cmd, COMMANDS["check"])()
 
 
 def entry():
