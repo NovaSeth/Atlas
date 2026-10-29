@@ -39,8 +39,8 @@ record, newest first, the last 200 lines are probed for shape):
 
 | Record | Fields | Meaning |
 |---|---|---|
-| `type: user` | `promptId`, `promptSource` (`typed` or `queued`), `origin.kind` (absent or `human`), `message.content` (text and image blocks only), `timestamp`, `sessionId` | a prompt typed by a person |
-| `attachment` of type `queued_command` | `prompt`, `humanTurn` (must be true), `origin.kind`, `delivery_id`, `commandMode` (`prompt`), `timestamp` | a message typed while the agent was busy |
+| `type: user` | `promptId`, `promptSource` (`typed` or `queued`), `origin` (absent, `"human"` or `{"kind": "human"}`), `message.content` (text and image blocks only), `timestamp`, `sessionId` | a prompt typed by a person |
+| `attachment` of type `queued_command` | `prompt`, `humanTurn` (must be true), `origin` (`"human"` or `{"kind": "human"}`), `delivery_id`, `commandMode` (`prompt`), `timestamp` | a message typed while the agent was busy |
 | `queue-operation` with `operation: remove` | `deliveryId`, `timestamp` | the moment a queued message was handed to the model (must be within 10 s) |
 | `<task-notification>` envelope in the prompt text | `<task-id>` | a background-task notice: never counts as human, even when it looks like one |
 
@@ -51,9 +51,10 @@ record, newest first, the last 200 lines are probed for shape):
   another way or the session stays restricted. It never clears taint on a guess.
 - **A field renamed or retyped** (`promptSource`, `delivery_id`, `humanTurn`, `promptId`): the record no longer
   proves a human origin, the prompt is treated as unverified and the taint stays.
-  **Fail closed:** a `type: user` record whose `origin` is an explicit null, or an object with no string `kind`, or a `kind` other
-  than `human`, is not human and the taint stays; a record with no `origin` key at all is still accepted. A queued
-  message (`queued_command`) is stricter: it needs `origin.kind` equal to `human` and `humanTurn` true.
+  **Fail closed:** a `type: user` record is human only with no `origin` key, `"origin": "human"`, or `{"kind": "human"}`;
+  anything else (other strings, other objects, an explicit null, numbers, lists) is not human and the taint stays. A queued
+  message (`queued_command`) is stricter: it needs `"origin": "human"` or `{"kind": "human"}` (a missing `origin` is not
+  enough) and `humanTurn` true.
 - **A hook input field missing.** Without `prompt_id` the prompt is treated as unverified. Without `agent_id` the call
   is treated as the main agent's: the per-subagent taint does not apply to it, so a harness change that drops
   `agent_id` weakens enforcement for subagents: the call is judged by the main session's taint only.

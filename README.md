@@ -159,8 +159,8 @@ is a deterministic hook (no model involved) that breaks the chain in Claude Code
 - While tainted, every tool call outside a small read-only allowlist is denied (writes, restarts, Edit/Write, MCP
   actions). Reading local files, simple read-only probes (`ls`, `df`, `ps`, `dpkg -l` ...) and the log-reader subagent stay possible.
 - Only a **verified human message** clears the taint: it must be a typed prompt found in the session transcript,
-  fresh and not used before. Its `origin` must be absent or an object whose `kind` is the string `human`; an explicit
-  null or any other kind is not human (details in [docs/compatibility.md](docs/compatibility.md)). Task notifications, system envelopes and loop ticks do not clear it.
+  fresh and not used before. Its origin counts as human only in three shapes: no `origin` key, `"origin": "human"`, or `{"kind": "human"}`;
+  anything else (other strings, other objects, null, numbers, lists) is not human (details in [docs/compatibility.md](docs/compatibility.md)). Task notifications, system envelopes and loop ticks do not clear it.
 - Raw logs go through `agent/claude-code/bin/untrusted-export` (copies a slice into the quarantine directory and
   prints only its path) and the `log-reader` subagent (read-only tools, bounded JSON answer).
 
