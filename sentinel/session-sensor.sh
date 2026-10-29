@@ -26,7 +26,9 @@ INTERVAL=${SENTINEL_INTERVAL:-120}
 # so lines never interleave mid-line.
 # --min-severity alert: info/warning events must not wake the session. --dedup-seconds 3600: the
 # same fingerprint at most once an hour (a new fingerprint always passes). --from-end: no replay of
-# old events on every restart.
+# old events on every restart. --redact-untrusted: events from sensors that carry attacker text show only
+# their sensor name and a digest (audit 3). --max-per-hour: at most N lines an hour reach the agent, plus
+# one summary line when an hour closes with suppressed events (audit 9).
 # When bus.py is absent the sensor works exactly as before. SENTINEL_BUS_CMD overrides it (tests).
 REPO_ROOT=$(cd "$SDIR/.." && pwd)
 BUS_CMD=${SENTINEL_BUS_CMD:-"python3 $REPO_ROOT/sentinel/bus.py"}
@@ -38,41 +40,9 @@ if [ -n "${SENTINEL_BUS_CMD:-}" ] || [ -f "$REPO_ROOT/sentinel/bus.py" ]; then
     : > "$SEEN"
     # Replays the bus lines appended since byte offset $1 (inode $2 of the file at the time; a
     # different inode or a shorter file = rotation: replay from the start) through the same filter
-    # as the follower: severity >= alert, a fingerprint at most once per hour (shared via $SEEN).
+    # as the follower: severity >= alert, a display key at most once per hour (shared via $SEEN).
     replay_gap() {
-        python3 -I -c '
-import json, os, sys, time
-path, off, ino, seen = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4]
-try:
-    st = os.stat(path)
-except OSError:
-    sys.exit(0)
-if st.st_ino != ino or st.st_size < off:
-    off = 0
-now = time.time()
-done = {}
-for l in open(seen).read().splitlines():
-    t, _, fp = l.partition(" ")
-    done[fp] = float(t)
-with open(path, "rb") as f:
-    f.seek(off)
-    data = f.read()
-data = data[: data.rfind(b"\n") + 1]
-for l in data.decode("utf-8", "replace").splitlines():
-    try:
-        e = json.loads(l)
-        if e["severity"] not in ("alert", "critical"):
-            continue
-        fp = str(e["fingerprint"])
-        if now - done.get(fp, 0) < 3600:
-            continue
-        done[fp] = now
-        with open(seen, "a") as s:
-            s.write("%d %s\n" % (now, fp))
-        print("%s %s %s: %s [%s]" % (str(e.get("ts", ""))[11:16], e["severity"].upper(), e["sensor"], e["what"], fp), flush=True)
-    except (ValueError, KeyError, TypeError):
-        continue
-' "$BUS_FILE" "$1" "$2" "$SEEN" 2>/dev/null
+        python3 -I "$SDIR/bus.py" replay "$BUS_FILE" "$1" "$2" "$SEEN" --redact-untrusted 2>/dev/null
     }
     # Records every printed follower line's fingerprint (the trailing [..]) so a replay after a
     # restart does not print it again.
@@ -89,7 +59,7 @@ for l in data.decode("utf-8", "replace").splitlines():
         # that looks like health. 30 s keeps a crash loop from burning CPU on 1 vCPU.
         # --from-end alone would lose everything emitted during that gap, so the size and inode of the
         # bus file are recorded when each follower starts; the next one first replays what was
-        # appended since (bus.py is not changed for this). The first start has nothing to replay.
+        # appended since (`bus.py replay`, with the same redaction). The first start has nothing to replay.
         start_off=""; start_ino=""
         while kill -0 "$MAIN_PID" 2>/dev/null; do
             cur_ino=$(stat -c %i "$BUS_FILE" 2>/dev/null || echo 0)
@@ -99,7 +69,8 @@ for l in data.decode("utf-8", "replace").splitlines():
             fi
             start_off=$cur_off; start_ino=$cur_ino
             # shellcheck disable=SC2086  # BUS_CMD is deliberately word-split
-            PYTHONUNBUFFERED=1 $BUS_CMD follow --min-severity alert --dedup-seconds 3600 --from-end > >(track_seen) &
+            PYTHONUNBUFFERED=1 $BUS_CMD follow --min-severity alert --dedup-seconds 3600 --from-end \
+                --redact-untrusted --max-per-hour "${SENTINEL_WAKE_MAX_PER_HOUR:-12}" > >(track_seen) &
             FPID=$!
             # Orphan guard: when this script is killed (even SIGKILL, which runs no trap), the
             # follower must not live on. Poll the parent every 2 s; cheap, no busy loop.
