@@ -88,6 +88,51 @@ class InstallResident(unittest.TestCase):
         self.assertIn("claude auth login", out)
         self.assertIn("systemctl enable --now atlas-resident", out)
 
+    def test_model_and_effort_are_rendered_and_summarised(self):
+        r = self.run_install(
+            "--resident-user", "ops-test", "--permission-mode", "plan", "--model", "claude-opus-5-5", "--effort", "high"
+        )
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('RESIDENT_MODEL="claude-opus-5-5"', r.stdout)
+        self.assertIn('RESIDENT_EFFORT="high"', r.stdout)
+        self.assertIn("model claude-opus-5-5", r.stdout)
+        self.assertIn("effort high", r.stdout)
+
+    def test_without_model_and_effort_summary_says_account_default(self):
+        r = self.run_install("--resident-user", "ops-test", "--permission-mode", "plan")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("model account default", r.stdout)
+        self.assertIn("effort account default", r.stdout)
+
+    def test_bad_effort_and_model_are_refused(self):
+        for flag, bad in (("--effort", "ultra"), ("--model", "Bad Model")):
+            r = self.run_install("--resident-user", "ops-test", "--permission-mode", "plan", flag, bad)
+            self.assertEqual(r.returncode, 2, flag)
+            self.assertIn(flag, r.stderr)
+
+    def test_model_and_effort_need_resident_user(self):
+        for flag, val in (("--effort", "high"), ("--model", "opus")):
+            r = self.run_install(flag, val)
+            self.assertEqual(r.returncode, 2, flag)
+
+    def test_existing_env_upgrade_prints_how_to_change_keys(self):
+        self.etc.mkdir(parents=True)
+        (self.etc / "resident.env").write_text("RESIDENT_PERMISSION_MODE=plan\n")
+        r = self.run_install("--resident-user", "ops-test", "--permission-mode", "plan")
+        self.assertIn("RESIDENT_MODEL", r.stdout)
+        self.assertIn("RESIDENT_EFFORT", r.stdout)
+
+    def test_docs_name_both_keys(self):
+        root = Path(__file__).resolve().parents[1]
+        for f in ("docs/resident.md", "docs/quickstart.md"):
+            t = (root / f).read_text()
+            self.assertIn("RESIDENT_MODEL", t, f)
+            self.assertIn("RESIDENT_EFFORT", t, f)
+        readme = (root / "README.md").read_text()
+        self.assertIn("--model", readme)
+        self.assertIn("--effort", readme)
+        self.assertIn("## Model and effort", (root / "docs/resident.md").read_text())
+
     def test_existing_resident_env_is_kept(self):
         self.etc.mkdir(parents=True)
         (self.etc / "resident.env").write_text("RESIDENT_PERMISSION_MODE=plan\n")
