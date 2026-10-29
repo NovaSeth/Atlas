@@ -86,7 +86,7 @@ cd atlas
 
 **Private repository?** `git clone` asks for credentials and fails otherwise. Either sign in with the GitHub CLI
 (`sudo apt-get install -y gh`, then `gh auth login` and `gh auth setup-git`), or add an SSH key of this server to
-your GitHub account and clone the `git@github.com:` address. Or ask the maintainer for an archive, unpack it, and
+your GitHub account and clone with the SSH address shown on the repository page. Or ask the maintainer for an archive, unpack it, and
 `cd` into it; then skip the verification below.
 
 **Verify the release before you run anything as root.** Releases are signed tags; the repository carries the allowed
