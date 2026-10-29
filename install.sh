@@ -29,7 +29,7 @@ usage() {
 
 Options:
   --code DIR       where the code lives (copied there from this checkout if different); default /opt/atlas
-  --state DIR      state directory (SENTINEL_ATLAS): config, baseline, logs; default /var/lib/atlas
+  --state DIR      state directory (SENTINEL_ATLAS): config, baseline, logs, runtime/; default /var/lib/atlas
   --user NAME      unprivileged account that runs Atlas (created if missing); default atlas
   --with-apache    also install the Apache sensitive-path log snippet (a2enconf + reload)
   --install-cron   install the crontab lines for the Atlas user (otherwise they are only printed)
@@ -179,7 +179,7 @@ fi
 
 # --- 4. State directory and the one config file --------------------------------------------------
 say "state directory $STATE"
-for d in "$STATE" "$STATE/jobs.d" "$STATE/bridges.d" "$STATE/pauses" "$STATE/snapshots"; do
+for d in "$STATE" "$STATE/jobs.d" "$STATE/bridges.d" "$STATE/pauses" "$STATE/snapshots" "$STATE/runtime"; do
     run install -d -m 0750 -o "$AUSER" -g "$AGROUP" "$d"
 done
 install_if_absent() {   # $1 source  $2 destination  $3 mode
@@ -194,6 +194,28 @@ install_if_absent "$REPO/examples/known-ips.txt" "$STATE/known-ips.txt" 0640
 install_if_absent "$REPO/examples/http-expected.json" "$STATE/http-expected.json" 0640
 install_if_absent "$REPO/atlas/pauses/README.md" "$STATE/pauses/README.md" 0640
 
+# Runtime state used to live in a world-writable directory (default /var/tmp/sentinel). Move it into
+# $STATE/runtime once, but only a real directory (not a symlink) that the Atlas user owns: anyone else could have
+# planted it, and an rm -rf on a path we do not own is exactly what must not happen as root.
+LEGACY=${ATLAS_LEGACY_STATE:-/var/tmp/sentinel}
+if [ -d "$LEGACY" ] && [ ! -L "$LEGACY" ] && [ "$(stat -c %U "$LEGACY")" = "$AUSER" ]; then
+    say "migrating the legacy runtime state $LEGACY -> $STATE/runtime"
+    migrated=1
+    for f in "$LEGACY"/escalation.log "$LEGACY"/router-sent.json "$LEGACY"/sent-*; do
+        if [ ! -f "$f" ] || [ -L "$f" ]; then continue; fi
+        if [ ! -e "$STATE/runtime/${f##*/}" ]; then
+            run mv "$f" "$STATE/runtime/${f##*/}" || { warn "could not move $f"; migrated=0; }
+        fi
+    done
+    if [ "$migrated" -eq 1 ]; then
+        run rm -rf --one-file-system "$LEGACY"
+    else
+        warn "legacy state $LEGACY kept: not every file could be moved"
+    fi
+elif [ -e "$LEGACY" ] || [ -L "$LEGACY" ]; then
+    warn "legacy state $LEGACY not migrated (owner $(stat -c %U "$LEGACY" 2>/dev/null || echo '?') or a symlink); remove it by hand"
+fi
+
 # --- 5. systemd units ---------------------------------------------------------------------------
 say "systemd units -> $SYSTEMD_DIR"
 for u in "${UNITS[@]}"; do
@@ -202,6 +224,8 @@ for u in "${UNITS[@]}"; do
 done
 run systemctl daemon-reload
 run systemctl enable --now sentinel-stream.service sentinel-escalation.timer
+# an upgrade replaced the code under a running stream: restart it (a no-op when it is not running)
+run systemctl try-restart sentinel-stream.service
 
 # --- 6. Apache snippet (optional) ---------------------------------------------------------------
 if [ "$APACHE" -eq 1 ]; then
@@ -269,7 +293,8 @@ else
     read -r -p "Accept this snapshot as the baseline now (atlas.py bless)? [y/N] " answer
     case $answer in
         [yY]*) as_user python3 "$CODE/atlas/atlas.py" bless ;;
-        *) say "later: sudo -u $AUSER env SENTINEL_ATLAS=$STATE python3 $CODE/atlas/atlas.py bless" ;;
+        *) say "later: sudo -u $AUSER env SENTINEL_ATLAS=$STATE python3 $CODE/atlas/atlas.py bless"
+           say "until then the patrol reports UNKNOWN (no baseline yet)" ;;
     esac
 fi
 

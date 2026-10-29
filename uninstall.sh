@@ -3,7 +3,7 @@
 #
 #   ./uninstall.sh [--state DIR] [--user NAME] [--purge] [--dry-run]
 #
-# The state directory (baseline, config, logs) is kept unless --purge is given. The code directory
+# The state directory (baseline, config, logs, runtime/) is kept unless --purge is given. The code directory
 # and the user account are left alone (remove them by hand if you want to).
 set -uo pipefail
 
