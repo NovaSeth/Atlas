@@ -9,8 +9,8 @@ controls the Atlas account can run each allowed line with any argument its rule 
 ## What Atlas writes
 
 - Its **state directory** (`SENTINEL_ATLAS`): `baseline.json`, `ALERT*`, `events.jsonl`, logs, and `runtime/`
-  (escalation markers, stream heartbeat, router and digest state; private to the Atlas user). Older installs kept
-  this in `/var/tmp/sentinel`; the installer moves it into `runtime/` on upgrade. `runtime/outbox/` holds notices
+  (escalation markers, stream heartbeat, router and digest state; owner and mode are checked at use). Installs from before this layout kept
+  it in `/var/tmp/sentinel`; the installer moves it into `runtime/` on upgrade. `runtime/outbox/` holds notices
   that could not be delivered at once, one file each, until the next escalation run delivers them
   (`notify.py drain`). Atlas never writes into the code directory, `/etc`, or anything it watches.
 - It sends mail (`mail`) and runs `SENTINEL_NOTIFY_CMD` if you configure one.

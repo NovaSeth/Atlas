@@ -144,7 +144,7 @@ Every sensor obeys all of this; code that does not is a script that sometimes sa
   content first appeared). Writes are atomic (temp file + rename), so readers never see it half written.
 - `ALERT.since` marks the start of a continuous episode; escalation measures the alert's age from it, so an
   alert whose text changes every run still escalates.
-- `ALERT.acked` acknowledges: valid only while it is at least as new as `ALERT`. New content needs a new ack.
+- `ALERT.acked` acknowledges: valid only while it is at least as new as `ALERT`. New content needs a new ack. Create it with `python3 atlas/atlas.py ack` (records who and when); a bare `touch` still works but triggers one "ack-unrecorded" notice.
 - A clean run removes `ALERT` and ends the episode: an alarm must be able to go out on its own.
 
 ## The real-time layer (`sentinel/`)
