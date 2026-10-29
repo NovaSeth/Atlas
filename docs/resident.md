@@ -116,10 +116,14 @@ and stays attachable. This is not an official Claude Code feature; the exact ins
 - `examples/resident/resident.env` - installed as `/etc/atlas/resident.env`: working directory, screen name,
   Remote Control name, `RESIDENT_PERMISSION_MODE` (`default` keeps the human approval step; `bypassPermissions`
   removes it), path of `claude`, optional extra login checks (`RESIDENT_AUTH_CHECKS="codex login status"`).
+- `RESIDENT_EXTRA_ARGS` (empty by default) adds claude flags before the first prompt, split on whitespace (no quoting,
+  no newline). Example: `--permission-mode bypassPermissions` also needs `--allow-dangerously-skip-permissions`,
+  otherwise claude may stop at a consent prompt with nobody watching. Risk: this combination removes the human
+  approval step for an AI that starts at boot; the account's rights are the only limit.
 - `examples/resident/start-resident.sh` - honours `RESIDENT-OFF`, refuses a second session, waits for the network,
   checks the logins, writes `<state>/BOOT`, then starts a fresh session whose first prompt points the agent to
   `AGENTS.md`, `BOOT` and `AFTER-REBOOT.md` and tells it to re-arm the session sensor. `--dry-run` prints what it
-  would do. Exit 3 = a login is missing.
+  would do. Exit 2 = bad setup (the env file is sourced as shell code, so it must be root-owned and not writable by group/other), 3 = a login is missing, 4 = `claude` not found.
 
 Risk: this starts an AI with shell access at boot, with nobody watching; the account's rights limit it. Then set
 `SENTINEL_RESIDENT_UNIT=atlas-resident.service` (step 3). Whatever starts the agent, it must re-arm the session

@@ -433,11 +433,13 @@ sudo install -d -m 0755 /etc/atlas
 sudo install -m 0644 examples/resident/resident.env /etc/atlas/resident.env
 sudo nano /etc/atlas/resident.env      # check RESIDENT_DIR, RESIDENT_NAME and RESIDENT_CLAUDE (path of claude)
 sed -e "s|@ATLAS_CODE@|/opt/atlas|g" -e "s|@ATLAS_STATE@|/var/lib/atlas|g" -e "s|@RESIDENT_USER@|ops|g" \
+  -e "s|@RESIDENT_HOME@|/home/ops|g" \
   examples/systemd/atlas-resident.service | sudo tee /etc/systemd/system/atlas-resident.service >/dev/null
 sudo systemctl daemon-reload
 sudo systemctl enable --now atlas-resident.service
 ```
 
+`resident.env` is sourced as shell code: keep it root-owned and not writable by others (the script refuses otherwise).
 `RESIDENT_PERMISSION_MODE=default` keeps the human approval step; `bypassPermissions` removes it. Then set
 `SENTINEL_RESIDENT_UNIT=atlas-resident.service` in `/var/lib/atlas/sentinel.env`, so Atlas reports the resident dead
 when the unit fails. The service sends the first message of step 7 by itself (a generic version). Attach with

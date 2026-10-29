@@ -22,8 +22,13 @@ StartLimitBurst=5
 Type=exec
 User=@RESIDENT_USER@
 Environment=RESIDENT_ENV=/etc/atlas/resident.env
+# Placeholders: @ATLAS_CODE@ @ATLAS_STATE@ @RESIDENT_USER@ @RESIDENT_HOME@ (that account's home directory).
+# systemd sets HOME, USER, LOGNAME and SHELL from User= itself. PATH is set here because the native Claude Code
+# installer puts claude in ~/.local/bin, which systemd's default PATH lacks. TERM: screen needs a terminal type.
+# SENTINEL_ATLAS here wins over a SENTINEL_ATLAS in resident.env.
 Environment=SENTINEL_ATLAS=@ATLAS_STATE@
 Environment=TERM=xterm-256color
+Environment=PATH=@RESIDENT_HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=@ATLAS_CODE@/examples/resident/start-resident.sh
 Restart=on-failure
 RestartSec=60

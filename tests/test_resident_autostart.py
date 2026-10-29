@@ -199,6 +199,9 @@ class Templates(unittest.TestCase):
             "@ATLAS_CODE@",
             "@ATLAS_STATE@",
             "@RESIDENT_USER@",
+            "@RESIDENT_HOME@",
+            "Environment=TERM=xterm-256color",
+            "Environment=PATH=@RESIDENT_HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin",
             "User=@RESIDENT_USER@",
             "Type=exec",
             "Restart=on-failure",
@@ -223,6 +226,8 @@ class Templates(unittest.TestCase):
             "RESIDENT_PERMISSION_MODE=default",
             "RESIDENT_CLAUDE=",
             "RESIDENT_AUTH_CHECKS=",
+            "RESIDENT_EXTRA_ARGS=",
+            "--allow-dangerously-skip-permissions",
             "SENTINEL_ATLAS=/var/lib/atlas",
             "ATLAS_CODE=/opt/atlas",
             "codex login status",
@@ -252,6 +257,8 @@ class Docs(unittest.TestCase):
             "ANTHROPIC_API_KEY",
             "SENTINEL_RESIDENT_UNIT=atlas-resident.service",
             "systemctl restart atlas-resident",
+            "RESIDENT_EXTRA_ARGS",
+            "--allow-dangerously-skip-permissions",
         ):
             self.assertIn(needle, t)
 
@@ -261,6 +268,7 @@ class Docs(unittest.TestCase):
             "examples/systemd/atlas-resident.service",
             "examples/resident/resident.env",
             "examples/resident/start-resident.sh",
+            "@RESIDENT_HOME@",
             "SENTINEL_RESIDENT_UNIT=atlas-resident.service",
             "not an official Claude Code feature",
             "screen -ls",
