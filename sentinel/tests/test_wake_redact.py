@@ -126,3 +126,21 @@ class SensorWiring(unittest.TestCase):
         text = args.read_text()
         self.assertIn("--redact-untrusted", text)
         self.assertIn("--max-per-hour 12", text)
+
+
+class ReplayBudget(unittest.TestCase):
+    def test_replay_is_bounded_by_the_wake_budget(self):
+        d = tmpdir(self)
+        path = d / "events.jsonl"
+        for i in range(10):
+            bus.emit(hostile("web.sensitive-hit", i), path=path)
+        seen = d / "seen"
+        seen.write_text("")
+        cmd = [sys.executable, str(SENTINEL / "bus.py"), "replay", str(path), "0", str(path.stat().st_ino),
+               str(seen), "--redact-untrusted"]
+        env = dict(os.environ, SENTINEL_WAKE_MAX_PER_HOUR="3")
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=20, env=env).stdout.splitlines()
+        self.assertEqual(len(out), 4, out)
+        self.assertIn("7", out[-1])
+        self.assertIn("events.jsonl", out[-1])
+        self.assertNotIn(PAYLOAD, "\n".join(out))
