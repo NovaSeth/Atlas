@@ -1759,8 +1759,10 @@ def deny_state(state):
 
 def launch_allowed(tool, ti):
     """Config `subagent_allowlist`: when non-empty, Agent/Task may launch only the listed types (any state)."""
+    if tool not in ("Agent", "Task"):
+        return True  # no config read on the hot path of every other tool
     allowed = config()["subagent_allowlist"]
-    if tool not in ("Agent", "Task") or not allowed:
+    if not allowed:
         return True
     kind = ti.get("subagent_type") if isinstance(ti, dict) else None
     return isinstance(kind, str) and kind in allowed
