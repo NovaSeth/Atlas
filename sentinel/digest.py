@@ -50,7 +50,7 @@ def collect(now: float, window_s: int = 86400, paths: list | None = None) -> lis
                     continue
                 if event.get("evidence", {}).get("digest") is not True and event["sensor"] not in DIGEST_SENSORS:
                     continue
-                found.setdefault((event["ts"], event["fingerprint"]), event)
+                found.setdefault((event["ts"], event["fingerprint"], event["what"]), event)
     return sorted(found.values(), key=lambda event: event["ts"])
 
 
