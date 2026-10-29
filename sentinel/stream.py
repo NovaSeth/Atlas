@@ -56,6 +56,10 @@ DEFAULT_RESTART_DELAY = 5.0
 # A source that stayed up this long counts as healthy again.
 DEFAULT_STABLE_SECS = 10.0
 TICK = 1.0
+# How long a terminated source process gets to exit before it is killed.
+STOP_WAIT_S = 5
+# Hex digits of the path digest in the web fingerprint.
+PATH_DIGEST_LEN = 12
 
 # Only these journal fields are requested: smaller JSON, less parsing on 1 vCPU.
 JOURNAL_FIELDS = "MESSAGE,_SYSTEMD_UNIT,SYSLOG_IDENTIFIER,_PID,UNIT,_TRANSPORT,_UID,_EXE,_COMM"
@@ -419,7 +423,7 @@ def web_events(line):
     # Letters only (hex nibble -> a..p): a digit run would look like an epoch to the bus fingerprint sanitizer
     # and be replaced, which would merge distinct paths again.
     digest = "".join("abcdefghijklmnop"[int(c, 16)]
-                     for c in hashlib.sha256(path_raw.encode("utf-8", "surrogateescape")).hexdigest()[:12])
+                     for c in hashlib.sha256(path_raw.encode("utf-8", "surrogateescape")).hexdigest()[:PATH_DIGEST_LEN])
     # grep needs a literal prefix of the logged path, not the "..." of a shortened one
     grep_key = clean(path_raw, len(path_raw) + 1)[:PATH_LIMIT]
     if 200 <= status < 300:
@@ -505,7 +509,7 @@ class Source(threading.Thread):
         if p and p.poll() is None:
             p.terminate()
             try:
-                p.wait(timeout=5)
+                p.wait(timeout=STOP_WAIT_S)
             except subprocess.TimeoutExpired:
                 p.kill()
         if p:
@@ -570,25 +574,8 @@ def router_loop(stop, ready):
     ready.set()
 
 
-def main():
-    stop = threading.Event()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, lambda *_: stop.set())
-    state = router.state_dir()
-    try:
-        bus.ensure_private_dir(state)
-    except bus.UnsafeStateDir as e:
-        print("sentinel-stream: unsafe runtime directory %s (%s)" % (state, e.code), file=sys.stderr, flush=True)
-        return 3
-    heartbeat = state / "stream.heartbeat"
-    hb_secs = _env_num("SENTINEL_HEARTBEAT_SECS", DEFAULT_HEARTBEAT_SECS)
-    wd_secs = _env_num("SENTINEL_WATCHDOG_SECS", DEFAULT_WATCHDOG_SECS)
-    unreadable = _env_num("SENTINEL_UNREADABLE_SECS", DEFAULT_UNREADABLE_SECS)
-    known = known_ips_default()
-    web_log = os.environ.get("SENTINEL_WEB_LOG") or WEB_LOG_DEFAULT
-
-    limiter = SuspectLimiter()
-
+def _make_sources(stop, limiter, known, web_log):
+    """The two followers: journal and web, both feeding the bus through the shared limiter."""
     def on_journal(line):
         try:
             entry = json.loads(line)
@@ -602,7 +589,7 @@ def main():
             emit_safe(ev)
 
     web_cmd_env = os.environ.get("SENTINEL_WEB_CMD")
-    sources = [
+    return [
         Source("journal", lambda: shlex.split(os.environ.get("SENTINEL_JOURNAL_CMD") or JOURNAL_CMD),
                on_journal, stop),
         Source("web", lambda: shlex.split(web_cmd_env or "tail -n 0 -F %s" % shlex.quote(web_log)),
@@ -610,6 +597,49 @@ def main():
                # tail -F happily waits for a file that never appears: check readability ourselves
                readable=(lambda: True) if web_cmd_env else (lambda: os.access(web_log, os.R_OK))),
     ]
+
+
+def _tick(rt, sources, limiter, unreadable, beat, now):
+    """One main-loop pass: health events, the limiter summary, then heartbeat and watchdog while every
+    thread lives. `beat` carries the heartbeat path, the intervals and the last beat times (mutated).
+    Beat only while every thread lives: a crashed thread must stop the beat, so that escalation
+    (heartbeat) and systemd (watchdog restart) see it. Silence is a signal."""
+    alive = rt.is_alive() and all(s.is_alive() for s in sources)
+    for s in sources:
+        ev = s.check_health(unreadable)
+        if ev:
+            emit_safe(ev)
+    for ev in limiter.flush():   # the hourly "suppressed" summary even when no new event arrives
+        emit_safe(ev)
+    if alive and now - beat["last_hb"] >= beat["hb_secs"]:
+        try:
+            beat["heartbeat"].touch()
+            os.utime(beat["heartbeat"])
+        except OSError as e:
+            print("sentinel-stream: heartbeat: %s" % e, file=sys.stderr, flush=True)
+        beat["last_hb"] = now
+    if alive and now - beat["last_wd"] >= beat["wd_secs"]:
+        sd_notify("WATCHDOG=1")
+        beat["last_wd"] = now
+
+
+def main():
+    stop = threading.Event()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda *_: stop.set())
+    state = router.state_dir()
+    try:
+        bus.ensure_private_dir(state)
+    except bus.UnsafeStateDir as e:
+        print("sentinel-stream: unsafe runtime directory %s (%s)" % (state, e.code), file=sys.stderr, flush=True)
+        return 3
+    beat = {"heartbeat": state / "stream.heartbeat", "last_hb": 0.0, "last_wd": 0.0,
+            "hb_secs": _env_num("SENTINEL_HEARTBEAT_SECS", DEFAULT_HEARTBEAT_SECS),
+            "wd_secs": _env_num("SENTINEL_WATCHDOG_SECS", DEFAULT_WATCHDOG_SECS)}
+    unreadable = _env_num("SENTINEL_UNREADABLE_SECS", DEFAULT_UNREADABLE_SECS)
+    web_log = os.environ.get("SENTINEL_WEB_LOG") or WEB_LOG_DEFAULT
+    limiter = SuspectLimiter()
+    sources = _make_sources(stop, limiter, known_ips_default(), web_log)
     ready = threading.Event()
     rt = threading.Thread(target=router_loop, args=(stop, ready), name="router", daemon=True)
     rt.start()
@@ -617,29 +647,8 @@ def main():
     for s in sources:
         s.start()
     sd_notify("READY=1")
-
-    last_hb = last_wd = 0.0
     while not stop.is_set():
-        now = time.monotonic()
-        alive = rt.is_alive() and all(s.is_alive() for s in sources)
-        for s in sources:
-            ev = s.check_health(unreadable)
-            if ev:
-                emit_safe(ev)
-        for ev in limiter.flush():   # the hourly "suppressed" summary even when no new event arrives
-            emit_safe(ev)
-        # Beat only while every thread lives: a crashed thread must stop the beat, so that
-        # escalation (heartbeat) and systemd (watchdog restart) see it. Silence is a signal.
-        if alive and now - last_hb >= hb_secs:
-            try:
-                heartbeat.touch()
-                os.utime(heartbeat)
-            except OSError as e:
-                print("sentinel-stream: heartbeat: %s" % e, file=sys.stderr, flush=True)
-            last_hb = now
-        if alive and now - last_wd >= wd_secs:
-            sd_notify("WATCHDOG=1")
-            last_wd = now
+        _tick(rt, sources, limiter, unreadable, beat, time.monotonic())
         stop.wait(TICK)
     sd_notify("STOPPING=1")
     for s in sources:
