@@ -371,14 +371,98 @@ class WakeLimiter:
         return out
 
 
+def wake_state_dir(bus_file=None):
+    """Where the session sensor keeps its shared wake budget: SENTINEL_STATE_DIR, else `runtime` next to the
+    bus file (= atlas/runtime in production)."""
+    if os.environ.get("SENTINEL_STATE_DIR"):
+        return Path(os.environ["SENTINEL_STATE_DIR"])
+    return Path(bus_file).parent / "runtime" if bus_file else runtime_dir()
+
+
+class SharedWakeBudget:
+    """One wake window per state directory, shared by every follower (restarts included) and by replay.
+    The window start (wall clock), the count and the closed-window summary live in `wake-budget.json`,
+    updated under a lock with an atomic write. State that cannot be read or saved counts as an hour whose
+    budget is already used up (fewer wake-ups, never more) and is reported once through `problem`."""
+
+    def __init__(self, max_per_hour, state_dir, window_s=3600, clock=time.time):
+        self.max, self.dir, self.window, self.clock = max_per_hour, Path(state_dir), window_s, clock
+        self.problem = ""        # set once when the state is unusable; the caller prints it
+        self._reported = False
+        self._mem = None        # in-memory fallback state while the file is unusable
+
+    def take_problem(self):
+        if self.problem and not self._reported:
+            self._reported = True
+            return self.problem
+        return ""
+
+    def _limiter(self, st):
+        lim = WakeLimiter(self.max, self.window, clock=self.clock)
+        lim.start, lim.admitted = st.get("start"), int(st.get("count", 0))
+        lim.suppressed, lim.first = int(st.get("suppressed", 0)), str(st.get("first", ""))
+        c = st.get("closed")
+        lim._closed = (int(c[0]), str(c[1])) if c else None
+        return lim
+
+    @staticmethod
+    def _dump(lim):
+        return {"start": lim.start, "count": lim.admitted, "suppressed": lim.suppressed, "first": lim.first,
+                "closed": list(lim._closed) if lim._closed else None}
+
+    def _exhausted(self, why):
+        if not self.problem:
+            self.problem = why
+        if self._mem is None:
+            self._mem = {"start": self.clock(), "count": self.max, "suppressed": 0, "first": "", "closed": None}
+        return self._mem
+
+    def _run(self, op):
+        try:
+            ensure_private_dir(self.dir)
+            with open(self.dir / "wake-budget.lock", "a") as lf:
+                fcntl.flock(lf, fcntl.LOCK_EX)
+                try:
+                    st = json.loads((self.dir / "wake-budget.json").read_text())
+                    if not isinstance(st, dict):
+                        raise ValueError("not an object")
+                    lim = self._limiter(st)
+                except FileNotFoundError:
+                    lim = self._limiter(self._mem or {})
+                except (OSError, ValueError, TypeError, IndexError) as e:
+                    lim = self._limiter(self._exhausted("wake budget state unreadable (%s)" % type(e).__name__))
+                result = op(lim)
+                tmp = self.dir / "wake-budget.json.tmp"
+                tmp.write_text(json.dumps(self._dump(lim)))
+                os.replace(tmp, self.dir / "wake-budget.json")
+                self._mem = None
+                return result
+        except (OSError, UnsafeStateDir) as e:
+            lim = self._limiter(self._exhausted("wake budget state unusable (%s)" % getattr(e, "code", type(e).__name__)))
+            result = op(lim)
+            self._mem = self._dump(lim)
+            return result
+
+    def admit(self, sensor):
+        return self._run(lambda lim: lim.admit(sensor))
+
+    def roll(self):
+        return self._run(lambda lim: lim.roll())
+
+
 def cmd_follow(args):
     floor = SEVERITIES.index(args.min_severity)
     last = {}  # fingerprint -> monotonic time last printed; a NEW fingerprint is never suppressed
     limit = wake_max_per_hour() if args.max_per_hour is None else args.max_per_hour
-    limiter = WakeLimiter(limit) if limit > 0 else None
+    limiter = SharedWakeBudget(limit, wake_state_dir(bus_path())) if limit > 0 else None
 
     def on_idle():
         rolled = limiter.roll() if limiter else None
+        problem = limiter.take_problem() if limiter else ""
+        if problem:
+            print("%s ALERT sentinel.wake-limit: %s; no events shown this hour (limit %d/h), see events.jsonl "
+                  "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), problem, limit),
+                  flush=True)
         if rolled:
             print("%s ALERT sentinel.wake-limit: %d event(s) not shown in the last hour (limit %d/h) "
                   "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), rolled[0], limit),
@@ -395,7 +479,9 @@ def cmd_follow(args):
         if len(last) > 5000:  # bounded memory: drop expired entries
             last = {k: v for k, v in last.items() if now - v < args.dedup_seconds}
         if limiter and not limiter.admit(ev["sensor"]):
+            on_idle()  # a state problem found by this admit is said at once
             continue
+        on_idle()
         print(format_line(ev, args.redact_untrusted), flush=True)
     return 0
 
@@ -413,18 +499,19 @@ def cmd_replay(args):
         off = 0
     now = time.time()
     done = {}
+    state_failure = ""   # why the seen list could not be read or saved; said once, exit code 1
     try:
         for l in open(args.seen_file).read().splitlines():
             t, _, key = l.partition(" ")
             done[key] = float(t)
-    except (OSError, ValueError):
-        pass
+    except (OSError, ValueError) as e:
+        state_failure = type(e).__name__
     with open(path, "rb") as f:
         f.seek(off)
         data = f.read()
     data = data[: data.rfind(b"\n") + 1]
     limit = wake_max_per_hour()
-    limiter = WakeLimiter(limit) if limit > 0 else None
+    limiter = SharedWakeBudget(limit, wake_state_dir(path)) if limit > 0 else None
     suppressed = 0
     for l in data.decode("utf-8", "replace").splitlines():
         ev = _parse(l)
@@ -437,17 +524,23 @@ def cmd_replay(args):
         try:
             with open(args.seen_file, "a") as s:
                 s.write("%d %s\n" % (now, key))
-        except OSError:
-            pass
+        except OSError as e:
+            state_failure = state_failure or type(e).__name__
         if limiter and not limiter.admit(ev["sensor"]):
             suppressed += 1
             continue
         print(format_line(ev, args.redact_untrusted), flush=True)
+    problem = limiter.take_problem() if limiter else ""
+    if problem:
+        print("%s ALERT sentinel.wake-limit: %s; no events shown this hour (limit %d/h), see events.jsonl "
+              "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), problem, limit), flush=True)
+    if state_failure:
+        print("ATLAS SENSOR: replay state not saved (%s); events may repeat" % state_failure, flush=True)
     if suppressed:
         print("%s ALERT sentinel.wake-limit: %d more event(s) not shown (limit %d/h), see events.jsonl "
               "[sentinel.wake-limit]" % (datetime.now(timezone.utc).strftime("%H:%M"), suppressed, limit),
               flush=True)
-    return 0
+    return 1 if state_failure else 0
 
 
 def main(argv=None):

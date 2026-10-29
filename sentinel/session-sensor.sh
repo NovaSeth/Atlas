@@ -41,6 +41,8 @@ if [ -n "${SENTINEL_BUS_CMD:-}" ] || [ -f "$REPO_ROOT/sentinel/bus.py" ]; then
     # Replays the bus lines appended since byte offset $1 (inode $2 of the file at the time; a
     # different inode or a shorter file = rotation: replay from the start) through the same filter
     # as the follower: severity >= alert, a display key at most once per hour (shared via $SEEN).
+    # stderr stays out of the stream; a state failure is reported by replay itself on stdout
+    # ("ATLAS SENSOR: replay state not saved ...") and reaches the agent through this pipe.
     replay_gap() {
         python3 -I "$SDIR/bus.py" replay "$BUS_FILE" "$1" "$2" "$SEEN" --redact-untrusted 2>/dev/null
     }
