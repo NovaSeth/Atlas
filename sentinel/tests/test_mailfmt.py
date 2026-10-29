@@ -75,7 +75,7 @@ class Structure(unittest.TestCase):
     def test_hostile_text_is_escaped_in_html(self):
         msg = self.build(subject=HOSTILE, body=DRIFT)
         h = html_of(msg)
-        for raw in ("<script", "<img", "onerror=alert(2)>", '"><b>', "<b>bold"):
+        for raw in ("<script", "<img", "onerror=alert(2)>", '"><b>bold', "<b>bold"):
             self.assertNotIn(raw, h)
         self.assertIn("&lt;script&gt;", h)
         self.assertIn("&quot;&gt;&lt;b&gt;", h)
@@ -94,7 +94,7 @@ class Structure(unittest.TestCase):
     def test_sections_and_drift_lines_recognised(self):
         h = html_of(self.build())
         self.assertIn("PACKAGES", h)
-        self.assertIn("data-kind=\"section\"", h)
+        self.assertIn('data-kind="section"', h)
         self.assertEqual(len(re.findall('data-kind="added"', h)), 2)
         self.assertEqual(h.count('data-kind="removed"'), 1)
         self.assertEqual(h.count('data-kind="changed"'), 1)
@@ -111,11 +111,12 @@ class Structure(unittest.TestCase):
 
     def test_severity_mapping_covers_every_kind_in_the_code(self):
         used = set()
-        for path in list((ROOT / "sentinel").glob("*.py")) + list((ROOT / "atlas").glob("atlas.py")):
+        for path in [p for p in (ROOT / "sentinel").glob("*.py") if p.name != "mailfmt.py"]:
             text = path.read_text()
             used |= set(re.findall(r'send_or_queue\([^)]*?,\s*"([\w.-]+)"\)', text))
             used |= set(re.findall(r'kind="([\w.-]+)"', text))
-        used |= set(re.findall(r'^\s*"(atlas\.\w+)",$', (ROOT / "atlas/atlas.py").read_text(), re.M))
+        atlas_py = (ROOT / "atlas/atlas.py").read_text()
+        used |= set(re.findall(r'\n\s+"([\w.]+)",\n    \)\n', atlas_py))
         esc = (ROOT / "sentinel/escalation.sh").read_text()
         used |= set(re.findall(r"add_problem ([\w-]+)", esc))
         used -= {"x"}

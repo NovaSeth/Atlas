@@ -132,6 +132,7 @@ already set in the environment wins. The most important keys:
 | Key | Default | Meaning |
 |---|---|---|
 | `SENTINEL_EMAIL` | *(empty)* | who gets the escalation mails; empty = escalation reports UNKNOWN, never "ok" |
+| `SENTINEL_MAIL_FROM` / `SENTINEL_SENDMAIL_CMD` | *(auto)* | sender and sendmail binary of the alert mails (text + HTML, clean in light and dark mail clients) |
 | `SENTINEL_NOTIFY_CMD` | *(empty)* | extra channel, called as `<cmd> "<subject>" "<body>"` |
 | `SENTINEL_LANG` | `en` | language of the human-facing texts (`en`, `pl`) |
 | `SENTINEL_RESIDENT_UNIT` / `SENTINEL_RESIDENT_SCREEN` | *(empty)* | how to see that the AI resident is alive; empty = no resident |
