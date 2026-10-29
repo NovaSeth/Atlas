@@ -1,3 +1,21 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/atlas-dark.svg">
+    <img src="docs/assets/atlas.svg" width="88" alt="Atlas">
+  </picture>
+  &nbsp;&nbsp;&nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/sentinel-dark.svg">
+    <img src="docs/assets/sentinel.svg" width="88" alt="Sentinel">
+  </picture>
+  &nbsp;&nbsp;&nbsp;
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/llm-dark.svg">
+    <img src="docs/assets/llm.svg" width="88" alt="LLM agent">
+  </picture>
+</p>
+<p align="center"><sub>Atlas · Sentinel · LLM agent</sub></p>
+
 # Atlas
 
 **Atlas is the immune system of one Linux server.** It knows what the machine *should* look like, notices within

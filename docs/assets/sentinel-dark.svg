@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="t">
+  <title id="t">Sentinel</title>
+  <!-- The lens where two circles of radius 208 overlap: two arcs between (76,256) and (436,256), an eye that
+       keeps watch. The dot is the pupil. -->
+  <g fill="none" stroke="#E2E8F0" stroke-width="28" stroke-linecap="round">
+    <path d="M76 256 A208 208 0 0 1 436 256"/>
+    <path d="M76 256 A208 208 0 0 0 436 256"/>
+  </g>
+  <circle cx="256" cy="256" r="44" fill="#FBBF24"/>
+</svg>

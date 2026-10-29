@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-labelledby="t">
+  <title id="t">LLM</title>
+  <!-- The logistic curve between its two asymptotes, which it nears and never meets. The dot sits on the inflection
+       point (256,256), the threshold where a reading turns into a verdict. -->
+  <g fill="none" stroke="#0F172A" stroke-linecap="round">
+    <path d="M80 104 H432 M80 408 H432" stroke-width="12" stroke-dasharray="1 30"/>
+    <path d="M80 368 C 200 368, 216 256, 256 256 S 312 144, 432 144" stroke-width="28"/>
+  </g>
+  <circle cx="256" cy="256" r="30" fill="#F59E0B"/>
+</svg>
