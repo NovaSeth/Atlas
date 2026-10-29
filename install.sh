@@ -2,6 +2,7 @@
 # install.sh - install Atlas + Sentinel on a Debian/Ubuntu host with systemd (Apache optional).
 #
 #   ./install.sh [--code DIR] [--state DIR] [--user NAME] [--with-apache] [--install-cron] [--yes] [--dry-run]
+#                [--resident-user NAME --permission-mode MODE [--resident-name NAME]]
 #
 # Idempotent: run it again after an update. It never overwrites an existing sentinel.env (or any other
 # file in the state directory). --dry-run prints every action instead of doing it; every system
@@ -14,6 +15,8 @@ CODE=/opt/atlas
 STATE=/var/lib/atlas
 AUSER=atlas
 DRY=0 APACHE=0 CRON=0 YES=0
+RUSER='' PMODE='' RNAME=''
+ETC_DIR=${ATLAS_ETC_DIR:-/etc/atlas}
 SYSTEMD_DIR=${ATLAS_SYSTEMD_DIR:-/etc/systemd/system}
 SUDOERS_DIR=${ATLAS_SUDOERS_DIR:-/etc/sudoers.d}
 APACHE_CONF_DIR=${ATLAS_APACHE_CONF_DIR:-/etc/apache2/conf-available}
@@ -33,6 +36,15 @@ Options:
   --user NAME      unprivileged account that runs Atlas (created if missing); default atlas
   --with-apache    also install the Apache sensitive-path log snippet (a2enconf + reload)
   --install-cron   install the crontab lines for the Atlas user (otherwise they are only printed)
+  --resident-user NAME   also set up the AI resident (screen session started at boot) for this account: renders
+                   /etc/atlas/resident.env and atlas-resident.service; does NOT enable or start it
+  --permission-mode MODE  REQUIRED with --resident-user, the trust level, your explicit choice:
+                     default            the agent asks you before risky actions (answered from the Claude app)
+                     acceptEdits        file edits go through without asking, other risky actions still ask
+                     plan               the agent only reads and plans
+                     bypassPermissions  the agent acts WITHOUT asking (also needs --allow-dangerously-skip-permissions,
+                                        which the installer then writes into RESIDENT_EXTRA_ARGS)
+  --resident-name NAME   name shown in the Claude app (Remote Control); default the host name
   --yes            do not ask before accepting the first snapshot as the baseline
   --dry-run        print every action, change nothing
 EOF
@@ -45,6 +57,9 @@ while [ $# -gt 0 ]; do
         --user) AUSER=${2:?--user needs a name}; shift 2 ;;
         --with-apache) APACHE=1; shift ;;
         --install-cron) CRON=1; shift ;;
+        --resident-user) RUSER=${2:?--resident-user needs a name}; shift 2 ;;
+        --permission-mode) PMODE=${2:?--permission-mode needs a value}; shift 2 ;;
+        --resident-name) RNAME=${2:?--resident-name needs a name}; shift 2 ;;
         --yes|-y) YES=1; shift ;;
         --dry-run|-n) DRY=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -80,6 +95,40 @@ if [ "$RCODE" != "$REPO" ]; then
         "$RCODE"/*) echo "install.sh: refusing: the state dir $STATE is inside the code dir $CODE, which the install" \
                          "replaces; keep state in its own directory (default /var/lib/atlas)" >&2; exit 2 ;;
     esac
+fi
+
+# --- AI resident options (optional): validated before any action ---------------------------------------
+RESIDENT_EXTRA=''
+MODE_HELP='  default            the agent asks you before risky actions (answered from the Claude app)
+  acceptEdits        file edits go through without asking, other risky actions still ask
+  plan               the agent only reads and plans
+  bypassPermissions  the agent acts WITHOUT asking: it runs any command the account may run, unattended'
+if [ -n "$RUSER" ]; then
+    [[ $RUSER =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || {
+        echo 'install.sh: --resident-user must match ^[a-z_][a-z0-9_-]{0,31}$' >&2; exit 2; }
+    if [ -z "$PMODE" ] && [ -t 0 ] && [ "$YES" -eq 0 ]; then
+        printf 'Choose the trust level of the AI resident (type the exact word):\n%s\n> ' "$MODE_HELP" >&2
+        read -r PMODE
+    fi
+    case $PMODE in
+        default|acceptEdits|plan|bypassPermissions) ;;
+        *) printf 'install.sh: --resident-user needs --permission-mode, an explicit choice, one of:\n%s\n' \
+               "$MODE_HELP" >&2
+           exit 2 ;;
+    esac
+    [ -n "$RNAME" ] || RNAME=$(hostname 2>/dev/null || echo atlas-server)
+    [[ $RNAME =~ ^[A-Za-z0-9._-]{1,64}$ ]] || {
+        echo 'install.sh: --resident-name may contain only letters, digits and . _ -' >&2; exit 2; }
+    RHOME=$(getent passwd "$RUSER" | cut -d: -f6)
+    if [ -z "$RHOME" ]; then
+        # dry run only: the conventional home of a not-yet-existing account (written split: no instance paths in code)
+        if [ "$DRY" -eq 1 ]; then RHOME="/ho""me/$RUSER"
+        else echo "install.sh: --resident-user $RUSER does not exist (create the account first)" >&2; exit 2; fi
+    fi
+    valid_path "$RHOME" || { echo "install.sh: the home directory of $RUSER has characters outside the path alphabet" >&2; exit 2; }
+    [ "$PMODE" = bypassPermissions ] && RESIDENT_EXTRA='--allow-dangerously-skip-permissions'
+elif [ -n "$PMODE" ] || [ -n "$RNAME" ]; then
+    echo "install.sh: --permission-mode and --resident-name need --resident-user" >&2; exit 2
 fi
 
 run() {   # every action that changes the system goes through here
@@ -131,7 +180,8 @@ fi
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/atlas-install.XXXXXX") || exit 1
 trap 'rm -rf "$TMP"' EXIT
 render() {   # $1 template  $2 output
-    sed -e "s|@ATLAS_CODE@|$CODE|g" -e "s|@ATLAS_STATE@|$STATE|g" -e "s|@ATLAS_USER@|$AUSER|g" "$1" > "$2"
+    sed -e "s|@ATLAS_CODE@|$CODE|g" -e "s|@ATLAS_STATE@|$STATE|g" -e "s|@ATLAS_USER@|$AUSER|g" \
+        -e "s|@RESIDENT_USER@|${RUSER:-}|g" -e "s|@RESIDENT_HOME@|${RHOME:-}|g" "$1" > "$2"
 }
 
 # --- 2. The Atlas user --------------------------------------------------------------------------
@@ -237,6 +287,37 @@ run systemctl enable --now sentinel-stream.service sentinel-escalation.timer
 # an upgrade replaced the code under a running stream: restart it (a no-op when it is not running)
 run systemctl try-restart sentinel-stream.service
 
+# --- 5b. AI resident (optional): files only, never enabled or started here -----------------------
+if [ -n "$RUSER" ]; then
+    say "AI resident for $RUSER (trust level: $PMODE)"
+    render "$REPO/examples/systemd/atlas-resident.service" "$TMP/atlas-resident.service"
+    sed -e "s|^RESIDENT_NAME=.*|RESIDENT_NAME=$RNAME|" \
+        -e "s|^RESIDENT_PERMISSION_MODE=.*|RESIDENT_PERMISSION_MODE=$PMODE|" \
+        -e "s|^RESIDENT_EXTRA_ARGS=.*|RESIDENT_EXTRA_ARGS=$RESIDENT_EXTRA|" \
+        -e "s|^SENTINEL_ATLAS=.*|SENTINEL_ATLAS=$STATE|" -e "s|^ATLAS_CODE=.*|ATLAS_CODE=$CODE|" \
+        "$REPO/examples/resident/resident.env" > "$TMP/resident.env"
+    if grep -hE '@[A-Z_]+@' "$TMP/atlas-resident.service" "$TMP/resident.env" >/dev/null; then
+        echo "install.sh: a placeholder was left in the rendered resident files" >&2; exit 1
+    fi
+    if [ "$DRY" -eq 1 ]; then
+        say "rendered resident.env:"; grep -v '^#' "$TMP/resident.env" | grep -v '^$' | sed 's/^/    /'
+        say "rendered atlas-resident.service:"; grep -v '^#' "$TMP/atlas-resident.service" | grep -v '^$' | sed 's/^/    /'
+    fi
+    run install -d -m 0755 -o root -g root "$ETC_DIR"
+    if [ -e "$ETC_DIR/resident.env" ]; then
+        say "keeping existing $ETC_DIR/resident.env (your trust level choice stays; edit it by hand to change it)"
+    else
+        run install -m 0644 -o root -g root "$TMP/resident.env" "$ETC_DIR/resident.env"
+    fi
+    run install -m 0644 "$TMP/atlas-resident.service" "$SYSTEMD_DIR/atlas-resident.service"
+    run systemctl daemon-reload
+    run sed -i "s|^SENTINEL_RESIDENT_UNIT=.*|SENTINEL_RESIDENT_UNIT=atlas-resident.service|" "$STATE/sentinel.env"
+    if [ "$PMODE" = bypassPermissions ]; then
+        warn "bypassPermissions: the AI resident will act WITHOUT asking, started at boot, unattended, with every" \
+             "right the account $RUSER has. Only you can undo this choice: edit RESIDENT_PERMISSION_MODE."
+    fi
+fi
+
 # --- 6. Apache snippet (optional) ---------------------------------------------------------------
 if [ "$APACHE" -eq 1 ]; then
     say "Apache sensitive-path log snippet"
@@ -310,5 +391,16 @@ fi
 
 if [ ! -e "$STATE/sentinel.env" ] || ! grep -qE '^SENTINEL_EMAIL=.+' "$STATE/sentinel.env" 2>/dev/null; then
     say "NEXT: set SENTINEL_EMAIL in $STATE/sentinel.env - until then escalation reports UNKNOWN (no recipient)"
+fi
+if [ -n "$RUSER" ]; then
+    say "AI resident: NOT started. Remaining steps, as $RUSER over SSH:"
+    say "    1. claude auth login          (open the URL on your own computer, paste the code back)"
+    say "    2. cd to RESIDENT_DIR in $ETC_DIR/resident.env, run claude once, answer the trust and Remote Control prompts"
+    say "    3. sudo systemctl enable --now atlas-resident"
+    say "    (screen must be installed: sudo apt-get install -y screen; details in docs/quickstart.md step 9)"
+else
+    say "AI resident (optional): not set up. To start an AI session at boot you must choose its trust level:"
+    say "    ./install.sh --resident-user NAME --permission-mode default|acceptEdits|plan|bypassPermissions"
+    say "    (see docs/quickstart.md step 9)"
 fi
 say "done$([ "$DRY" -eq 1 ] && echo ' (dry run: nothing was changed)')"

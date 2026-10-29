@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# uninstall.sh - reverse install.sh: units, Apache snippet, sudoers drop-in, managed crontab lines.
+# uninstall.sh - reverse install.sh: units (the AI resident unit and /etc/atlas/resident.env too), Apache snippet, sudoers drop-in, managed crontab lines.
 #
 #   ./uninstall.sh [--state DIR] [--user NAME] [--purge] [--dry-run]
 #
@@ -11,6 +11,7 @@ STATE=/var/lib/atlas
 AUSER=atlas
 DRY=0 PURGE=0
 SYSTEMD_DIR=${ATLAS_SYSTEMD_DIR:-/etc/systemd/system}
+ETC_DIR=${ATLAS_ETC_DIR:-/etc/atlas}
 SUDOERS_DIR=${ATLAS_SUDOERS_DIR:-/etc/sudoers.d}
 APACHE_CONF_DIR=${ATLAS_APACHE_CONF_DIR:-/etc/apache2/conf-available}
 UNITS=(sentinel-stream.service sentinel-escalation.service sentinel-escalation.timer)
@@ -42,6 +43,14 @@ if [ "$DRY" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+if present "$SYSTEMD_DIR/atlas-resident.service"; then
+    say "stopping and removing the AI resident unit and its env file"
+    run systemctl disable --now atlas-resident.service || true
+    run rm -f "$SYSTEMD_DIR/atlas-resident.service"
+    run rm -f "$ETC_DIR/resident.env"
+    run rmdir "$ETC_DIR" 2>/dev/null || true
+fi
+
 say "stopping and removing the units"
 run systemctl disable --now sentinel-stream.service sentinel-escalation.timer sentinel-escalation.service || true
 for u in "${UNITS[@]}"; do
@@ -49,7 +58,7 @@ for u in "${UNITS[@]}"; do
 done
 run systemctl daemon-reload
 # a removed unit that last ended in error stays listed by `systemctl --failed` until reset
-run systemctl reset-failed sentinel-stream.service sentinel-escalation.service 2>/dev/null || true
+run systemctl reset-failed sentinel-stream.service sentinel-escalation.service atlas-resident.service 2>/dev/null || true
 
 if present "$APACHE_CONF_DIR/sentinel-sensitive.conf"; then
     say "removing the Apache snippet"

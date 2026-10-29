@@ -73,6 +73,12 @@ sudo ./install.sh --with-apache --install-cron
 sudoedit /var/lib/atlas/sentinel.env    # set SENTINEL_EMAIL (and whatever else you need)
 ```
 
+To also set up an AI resident that starts at boot, add `--resident-user NAME --permission-mode MODE` (and optionally
+`--resident-name`). The trust level is **your explicit choice**, there is no default: `default` (the agent asks you
+before risky actions), `acceptEdits`, `plan`, or `bypassPermissions` (the agent acts without asking). The installer
+writes the files but does not start the unit; it prints the remaining steps (login, one-time prompts,
+`systemctl enable --now atlas-resident`). See [docs/quickstart.md](docs/quickstart.md) step 9.
+
 The installer (idempotent; defaults `--code /opt/atlas --state /var/lib/atlas --user atlas`):
 
 1. checks the prerequisites and prints what is missing;

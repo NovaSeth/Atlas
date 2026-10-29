@@ -423,7 +423,9 @@ on a reference host, using `screen`. Risk: a service that starts an AI with shel
 watching, is a standing privilege; the account's rights are what limits it. Give `ops` narrow sudo rights (see
 docs/resident.md), keep Atlas's escalation running, and be ready to stop it.
 
-Atlas ships the pieces: `examples/systemd/atlas-resident.service` (unit template), `examples/resident/resident.env`
+The installer can do the file work for you: `sudo ./install.sh --resident-user ops --permission-mode default` (the trust
+level is required, see below) renders `/etc/atlas/resident.env` and the unit and does not enable it. The manual steps
+follow. Atlas ships the pieces: `examples/systemd/atlas-resident.service` (unit template), `examples/resident/resident.env`
 (settings) and `examples/resident/start-resident.sh` (checks the network and the logins, then starts the session).
 Install them from the checkout of step 2, with the same placeholders the installer fills in:
 
