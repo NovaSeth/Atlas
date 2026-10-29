@@ -60,7 +60,7 @@ def test_broken_submodule_fails_closed(tmp_path, module, broken, tool):
                    else {"file_path": "/tmp/input"})
     result = subprocess.run([sys.executable, "-I", "-S", str(hooks / HOOK.name)],
                             input=json.dumps(payload), text=True, capture_output=True,
-                            env=dict(os.environ, TAINT_STATE_DIR=str(state)), timeout=10)
+                            env=dict(os.environ, TAINT_STATE_DIR=str(state), TAINT_SWITCH=str(tmp_path / "no-switch")), timeout=10)
     assert result.returncode == 0, result.stderr
     assert "Traceback" not in result.stderr
     if tool == "Bash":
@@ -75,6 +75,6 @@ def test_broken_submodule_fails_closed(tmp_path, module, broken, tool):
         payload.update(tool_name="Bash", tool_input={"command": "sudo id"})
         repaired = subprocess.run([sys.executable, "-I", "-S", str(hooks / HOOK.name)],
                                   input=json.dumps(payload), text=True, capture_output=True,
-                                  env=dict(os.environ, TAINT_STATE_DIR=str(state)), timeout=10)
+                                  env=dict(os.environ, TAINT_STATE_DIR=str(state), TAINT_SWITCH=str(tmp_path / "no-switch")), timeout=10)
         assert repaired.returncode == 0, repaired.stderr
         assert json.loads(repaired.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
