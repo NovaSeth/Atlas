@@ -133,6 +133,20 @@ class InstallResident(unittest.TestCase):
         self.assertIn("--effort", readme)
         self.assertIn("## Model and effort", (root / "docs/resident.md").read_text())
 
+    def test_upgrade_without_resident_user_reports_configured_resident(self):
+        self.etc.mkdir(parents=True)
+        env = self.etc / "resident.env"
+        env.write_text('RESIDENT_PERMISSION_MODE="plan"\nRESIDENT_MODEL="opus"\nRESIDENT_EFFORT=\n')
+        before = env.read_text()
+        r = self.run_install()
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(
+            f"AI resident: configured (trust level plan, model opus, effort account default); edit {env} to change",
+            r.stdout,
+        )
+        self.assertNotIn("not set up", r.stdout)
+        self.assertEqual(env.read_text(), before)
+
     def test_existing_resident_env_is_kept(self):
         self.etc.mkdir(parents=True)
         (self.etc / "resident.env").write_text("RESIDENT_PERMISSION_MODE=plan\n")

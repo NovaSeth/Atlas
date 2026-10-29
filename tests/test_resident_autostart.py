@@ -307,6 +307,56 @@ class StartScript(unittest.TestCase):
     def test_default_env_path_is_etc_atlas(self):
         self.assertIn("/etc/atlas/resident.env", SCRIPT.read_text())
 
+    def test_model_and_effort_follow_permission_mode_before_extra_args(self):
+        self.write_env('RESIDENT_MODEL=claude-opus-5-5\nRESIDENT_EFFORT=high\nRESIDENT_EXTRA_ARGS="--verbose"\n')
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        out = r.stdout
+        names = ("--permission-mode", "--model", "claude-opus-5-5", "--effort", "high", "--verbose")
+        order = [out.index(x) for x in names]
+        self.assertEqual(order, sorted(order))
+
+    def test_model_and_effort_empty_add_nothing(self):
+        self.write_env("RESIDENT_MODEL=\nRESIDENT_EFFORT=\n")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("--model", r.stdout)
+        self.assertNotIn("--effort", r.stdout)
+
+    def test_valid_model_ids_and_aliases_are_accepted(self):
+        for model in ("opus", "sonnet", "claude-sonnet-5-5", "claude-fable-5-1", "claude-opus-4-1[1m]"):
+            self.write_env(f'RESIDENT_MODEL="{model}"\n')
+            r = self.run_script("--dry-run")
+            self.assertEqual(r.returncode, 0, model + r.stderr)
+            self.assertIn("--model", r.stdout)
+
+    def test_invalid_model_is_refused_naming_the_key(self):
+        for model in ("-x", "a", "Opus", "bad model", "x/y", "a" * 65):
+            self.write_env(f'RESIDENT_MODEL="{model}"\n')
+            r = self.run_script("--dry-run")
+            self.assertEqual(r.returncode, 2, model)
+            self.assertIn("RESIDENT_MODEL", r.stderr)
+
+    def test_effort_levels(self):
+        for level in ("low", "medium", "high", "xhigh", "max"):
+            self.write_env(f"RESIDENT_EFFORT={level}\n")
+            r = self.run_script("--dry-run")
+            self.assertEqual(r.returncode, 0, level + r.stderr)
+            self.assertIn("--effort", r.stdout)
+
+    def test_invalid_effort_is_refused_naming_the_key(self):
+        for level in ("ultra", "HIGH", "hi gh"):
+            self.write_env(f'RESIDENT_EFFORT="{level}"\n')
+            r = self.run_script("--dry-run")
+            self.assertEqual(r.returncode, 2, level)
+            self.assertIn("RESIDENT_EFFORT", r.stderr)
+            self.assertIn("low|medium|high|xhigh|max", r.stderr)
+
+    def test_template_has_both_keys_empty(self):
+        t = ENVTPL.read_text()
+        self.assertRegex(t, r"(?m)^RESIDENT_MODEL=$")
+        self.assertRegex(t, r"(?m)^RESIDENT_EFFORT=$")
+
 
 class Templates(unittest.TestCase):
     def test_env_template_is_tracked_by_git(self):
@@ -425,54 +475,3 @@ class Docs(unittest.TestCase):
 if __name__ == "__main__":
     os.environ.setdefault("LC_ALL", "C")
     unittest.main()
-
-    def test_model_and_effort_follow_permission_mode_before_extra_args(self):
-        self.write_env('RESIDENT_MODEL=claude-opus-5-5\nRESIDENT_EFFORT=high\nRESIDENT_EXTRA_ARGS="--verbose"\n')
-        r = self.run_script("--dry-run")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        out = r.stdout
-        names = ("--permission-mode", "--model", "claude-opus-5-5", "--effort", "high", "--verbose")
-        order = [out.index(x) for x in names]
-        self.assertEqual(order, sorted(order))
-
-    def test_model_and_effort_empty_add_nothing(self):
-        self.write_env("RESIDENT_MODEL=\nRESIDENT_EFFORT=\n")
-        r = self.run_script("--dry-run")
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("--model", r.stdout)
-        self.assertNotIn("--effort", r.stdout)
-
-    def test_valid_model_ids_and_aliases_are_accepted(self):
-        for model in ("opus", "sonnet", "claude-sonnet-5-5", "claude-fable-5-1", "claude-opus-4-1[1m]"):
-            self.write_env(f'RESIDENT_MODEL="{model}"\n')
-            r = self.run_script("--dry-run")
-            self.assertEqual(r.returncode, 0, model + r.stderr)
-            self.assertIn("--model", r.stdout)
-
-    def test_invalid_model_is_refused_naming_the_key(self):
-        for model in ("-x", "a", "Opus", "bad model", "x/y", "a" * 65):
-            self.write_env(f'RESIDENT_MODEL="{model}"\n')
-            r = self.run_script("--dry-run")
-            self.assertEqual(r.returncode, 2, model)
-            self.assertIn("RESIDENT_MODEL", r.stderr)
-
-    def test_effort_levels(self):
-        for level in ("low", "medium", "high", "xhigh", "max"):
-            self.write_env(f"RESIDENT_EFFORT={level}\n")
-            r = self.run_script("--dry-run")
-            self.assertEqual(r.returncode, 0, level + r.stderr)
-            self.assertIn("--effort", r.stdout)
-
-    def test_invalid_effort_is_refused_naming_the_key(self):
-        for level in ("ultra", "HIGH", "hi gh"):
-            self.write_env(f'RESIDENT_EFFORT="{level}"\n')
-            r = self.run_script("--dry-run")
-            self.assertEqual(r.returncode, 2, level)
-            self.assertIn("RESIDENT_EFFORT", r.stderr)
-            self.assertIn("low|medium|high|xhigh|max", r.stderr)
-
-    def test_template_has_both_keys_empty(self):
-        t = ENVTPL.read_text()
-        self.assertRegex(t, r"(?m)^RESIDENT_MODEL=$")
-        self.assertRegex(t, r"(?m)^RESIDENT_EFFORT=$")
-
