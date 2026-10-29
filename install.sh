@@ -405,20 +405,16 @@ fi
 
 # --- 9b. First-run quiet: the operator's address, the vhosts' current answers, one patrol --------------
 # Without these the first patrol alarms for the operator's own login and for every vhost ("unknown expectation").
-valid_ip() {   # $1 candidate: IPv4 dotted quad (octets <= 255) or IPv6 hex/colons only
-    local ip=$1 o
-    if [[ $ip =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
-        for o in ${ip//./ }; do [ "$((10#$o))" -le 255 ] || return 1; done
-        return 0
-    fi
-    [[ $ip =~ ^[0-9A-Fa-f:]+$ ]] && [[ $ip == *:*:* ]]
+valid_ip() {   # $1 candidate; prints the normalized address, fails when it is not an IP (a zone id is refused)
+    case $1 in *%*) return 1 ;; esac   # Python accepts a zone id; a known address has none
+    python3 -I -c 'import ipaddress, sys; print(ipaddress.ip_address(sys.argv[1]))' "$1" 2>/dev/null
 }
 KNOWN_HOW="add your address: echo 'YOUR.IP.ADDRESS' | sudo tee -a $STATE/known-ips.txt"
 if [ "$FRESH_IPS" -ne 1 ]; then
     say "keeping existing $STATE/known-ips.txt"
 elif [ -n "${SSH_CONNECTION:-}" ]; then
     CLIENT_IP=${SSH_CONNECTION%% *}
-    if ! valid_ip "$CLIENT_IP"; then
+    if ! CLIENT_IP=$(valid_ip "$CLIENT_IP"); then
         warn "the SSH client address is not a valid IP address; known-ips.txt left alone"
         say "$KNOWN_HOW"
     else

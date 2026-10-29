@@ -87,7 +87,9 @@ class FirstRun(unittest.TestCase):
         ):
             r = self.run_install("--yes", ssh="%s 1 203.0.113.2 22" % bad)
             self.assertNotRegex(
-                r.stdout, r"\[dry-run\] (?!install -m).*known-ips\.txt|\[dry-run\] .*%s" % re.escape(bad), bad
+                r.stdout,
+                r"\[dry-run\] (?!install -m).*known-ips\.txt|\[dry-run\] sudo.* sh .*%s" % re.escape(bad or "-"),
+                bad,
             )
             self.assertIn("not a valid IP address", r.stderr, bad)
 
