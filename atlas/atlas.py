@@ -7,15 +7,18 @@ which vhosts answer, which binaries carry setuid. Anything that changes here cha
 because someone changed it. If neither the owner nor the resident did it, it is an intrusion.
 
     atlas.py snap    write current.json (in the state directory, SENTINEL_ATLAS)
-    atlas.py check   snap + diff against baseline.json; prints changes, exit 1 if any
-    atlas.py bless   promote current.json to baseline.json (after a reviewed, approved change)
+    atlas.py check   snap + diff against baseline.json; prints changes, exit 1 if any;
+                     no baseline = UNKNOWN (exit 2), a baseline is never created implicitly
+    atlas.py bless   promote current.json to baseline.json (after a reviewed, approved change);
+                     leaves a bus event and a notice to the human
+    atlas.py ack     acknowledge the current ALERT by its content (ALERT.acked); same trail as bless
     atlas.py show    human-readable map of the house
     atlas.py thresholds   read current.json: disk/RAM/cert thresholds (exit 0 clean, 1 alarm, 2 unknown)
     atlas.py silent       read current.json: print silent failures of timer services
 
 Volatile numbers (disk, RAM, load, ban counts) live under "vitals" and are never diffed.
 """
-import hashlib, json, os, re, shutil, subprocess, sys
+import hashlib, json, os, pwd, re, shutil, subprocess, sys
 from datetime import datetime, timezone
 
 # Code and instance state are separate: SENTINEL_ATLAS selects the state directory (baseline, current,
@@ -24,8 +27,11 @@ CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, CODE_DIR)
 import envfile  # noqa: E402
 from i18n import t  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(CODE_DIR), "sentinel"))
+import bus  # noqa: E402
+import notify  # noqa: E402
 
-BASE = os.environ.get("SENTINEL_ATLAS") or CODE_DIR
+BASE = os.path.abspath(os.environ.get("SENTINEL_ATLAS") or CODE_DIR)
 envfile.load(BASE)   # $BASE/sentinel.env; variables already in the environment win
 CURRENT = os.path.join(BASE, "current.json")
 BASELINE = os.path.join(BASE, "baseline.json")
@@ -631,9 +637,138 @@ def diff(old, new, path=""):
     return out
 
 
+def atomic_write_text(path, text):
+    """Write `text` to `path` through a temp file in the same directory and os.replace."""
+    tmp = "%s.tmp.%d" % (path, os.getpid())
+    try:
+        with open(tmp, "w") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def write(obj, path):
-    with open(path, "w") as f:
-        json.dump(obj, f, indent=1, ensure_ascii=False, sort_keys=True)
+    atomic_write_text(path, json.dumps(obj, indent=1, ensure_ascii=False, sort_keys=True))
+
+
+WHO_RE = re.compile(r"[A-Za-z0-9_.-]{1,32}")
+SECTION_LIMIT = 20       # sections named in an event or notice
+SECTION_NAME_LIMIT = 80  # characters of one ALERT section title
+
+
+def who():
+    """The human behind the command: SUDO_USER when well formed, else the effective user."""
+    su = os.environ.get("SUDO_USER", "")
+    if WHO_RE.fullmatch(su):
+        return su
+    try:
+        return pwd.getpwuid(os.geteuid()).pw_name
+    except (KeyError, OSError):
+        return "uid%d" % os.geteuid()
+
+
+def changed_sections(old, new):
+    """Sorted top-level keys outside IGNORE whose values differ; [] when there is no old snapshot."""
+    if old is None:
+        return []
+    return sorted(k for k in set(old) | set(new) if k not in IGNORE and old.get(k) != new.get(k))
+
+
+def alert_sha(raw):
+    """sha256 hex of the ALERT bytes after the first newline (the first line is a timestamp)."""
+    _, nl, body = raw.partition(b"\n")
+    return hashlib.sha256(body if nl else b"").hexdigest()
+
+
+def audit_event(sensor, what, evidence):
+    """Bus event for a human decision (bless/ack). A bus failure is a stderr line, never an exception."""
+    sha = evidence.get("sha256", "")
+    fp_sha = "".join(chr(ord("a") + int(c, 16)) for c in sha[:12])
+    try:
+        bus.emit({"sensor": sensor, "severity": "warning", "confidence": "measured", "what": what,
+                  "fingerprint": "%s:%s" % (sensor, fp_sha), "evidence": evidence})
+    except Exception as e:  # noqa: BLE001 - the trail must not break the command
+        print("atlas: bus event not written (%s): %s" % (sensor, e), file=sys.stderr)
+
+
+def tell_human(subject, body, kind):
+    status = notify.send_or_queue(subject, body, kind)
+    if status != "sent":
+        print(t("atlas.notify_not_sent", status=status), file=sys.stderr)
+    return status
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def cmd_bless():
+    try:
+        cur = json.load(open(CURRENT))
+    except (OSError, ValueError) as e:
+        print(t("atlas.current_unreadable", error=e), file=sys.stderr)
+        return 2
+    bad = snapshot_unknowns(cur)
+    if bad:
+        print(t("atlas.bless_refused") + "\n  " + "\n  ".join(bad), file=sys.stderr)
+        return 2
+    first = not os.path.exists(BASELINE)
+    try:
+        old = None if first else json.load(open(BASELINE))
+    except (OSError, ValueError):
+        old = None   # an unreadable old baseline is replaced; every section counts as changed below
+    sections = changed_sections(old, cur) if old is not None else sorted(k for k in cur if k not in IGNORE)
+    write(cur, BASELINE)
+    print("baseline updated")
+    sha256 = hashlib.sha256(open(BASELINE, "rb").read()).hexdigest()
+    shown = sections[:SECTION_LIMIT]
+    audit_event("atlas.bless", "baseline accepted by %s" % who(),
+                {"who": who(), "sections": shown, "first": first, "sha256": sha256})
+    listing = t("atlas.bless_first") if first else (", ".join(shown) or "-")
+    tell_human(t("atlas.bless_subject", who=who()),
+               t("atlas.bless_body", who=who(), when=now_iso(), sections=listing, sha256=sha256), "atlas.bless")
+    return 0
+
+
+def cmd_ack():
+    alert = os.path.join(BASE, "ALERT")
+    acked = os.path.join(BASE, "ALERT.acked")
+    try:
+        raw = open(alert, "rb").read()
+        st = os.stat(alert)
+    except OSError:
+        print(t("atlas.ack_nothing"), file=sys.stderr)
+        return 1
+    sha256 = alert_sha(raw)
+    atomic_write_text(acked, sha256 + "\n")
+    try:
+        st2 = os.stat(alert)
+        raced = (st2.st_mtime_ns != st.st_mtime_ns) or open(alert, "rb").read() != raw
+    except OSError:
+        raced = True
+    if raced:
+        # the patrol rewrote ALERT while we acknowledged: the ack must not cover the new content
+        try:
+            older = os.stat(alert).st_mtime - 1
+        except OSError:
+            older = 0
+        os.utime(acked, (older, older))
+        print(t("atlas.ack_raced"), file=sys.stderr)
+        return 3
+    body = raw.partition(b"\n")[2].decode("utf-8", "replace")
+    sections = [s[:SECTION_NAME_LIMIT] for s in re.findall(r"^== (.+) ==$", body, re.M)][:SECTION_LIMIT]
+    audit_event("atlas.ack", "alert acknowledged by %s" % who(),
+                {"who": who(), "sections": sections, "sha256": sha256})
+    tell_human(t("atlas.ack_subject", who=who()),
+               t("atlas.ack_body", who=who(), when=now_iso(), sections=", ".join(sections) or "-", sha256=sha256),
+               "atlas.ack")
+    print("alert acknowledged")
+    return 0
 
 
 def snapshot_unknowns(snap):
@@ -656,14 +791,9 @@ def measure_errors_text(errors):
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "check"
     if cmd == "bless":
-        cur = json.load(open(CURRENT))
-        bad = snapshot_unknowns(cur)
-        if bad:
-            print(t("atlas.bless_refused") + "\n  " + "\n  ".join(bad), file=sys.stderr)
-            return 2
-        write(cur, BASELINE)
-        print("baseline updated")
-        return 0
+        return cmd_bless()
+    if cmd == "ack":
+        return cmd_ack()
     if cmd in ("thresholds", "silent"):
         # read-only: reads current.json written by `check` in the same patrol run
         try:
@@ -727,5 +857,10 @@ def main():
     return 1
 
 
-if __name__ == "__main__":
+def entry():
+    os.chdir(BASE)
     sys.exit(main())
+
+
+if __name__ == "__main__":
+    entry()
