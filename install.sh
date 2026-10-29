@@ -198,7 +198,17 @@ install_if_absent "$REPO/atlas/pauses/README.md" "$STATE/pauses/README.md" 0640
 # $STATE/runtime once, but only a real directory (not a symlink) that the Atlas user owns: anyone else could have
 # planted it, and an rm -rf on a path we do not own is exactly what must not happen as root.
 LEGACY=${ATLAS_LEGACY_STATE:-/var/tmp/sentinel}
-if [ -d "$LEGACY" ] && [ ! -L "$LEGACY" ] && [ "$(stat -c %U "$LEGACY")" = "$AUSER" ]; then
+# Never touch it when it equals or contains/is inside the (real) state or code dir: the rm -rf below would delete
+# the live state or the code (e.g. --state /var/tmp/sentinel). Real paths, so symlinks cannot hide the overlap.
+RLEGACY=$(realpath -m "$LEGACY")
+overlaps() {   # $1 $2 real paths: equal, or one inside the other
+    case "$1/" in "$2"/*) return 0 ;; esac
+    case "$2/" in "$1"/*) return 0 ;; esac
+    return 1
+}
+if [ -e "$LEGACY" ] && { overlaps "$RLEGACY" "$RSTATE" || overlaps "$RLEGACY" "$RCODE"; }; then
+    warn "legacy state $LEGACY overlaps the state dir $STATE or the code dir $CODE; not migrated and never removed"
+elif [ -d "$LEGACY" ] && [ ! -L "$LEGACY" ] && [ "$(stat -c %U "$LEGACY")" = "$AUSER" ]; then
     say "migrating the legacy runtime state $LEGACY -> $STATE/runtime"
     migrated=1
     for f in "$LEGACY"/escalation.log "$LEGACY"/router-sent.json "$LEGACY"/sent-*; do
