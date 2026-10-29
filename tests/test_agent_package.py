@@ -36,7 +36,7 @@ class PluginManifestTests(unittest.TestCase):
     def test_plugin_json_is_valid_with_required_fields(self):
         data = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
         self.assertEqual(data["name"], "atlas-resident")
-        self.assertEqual(data["version"], "0.3.0")
+        self.assertEqual(data["version"], "0.3.1")
         self.assertTrue(data.get("description", "").strip())
         self.assertNotIn("@", json.dumps(data.get("author", "")))  # no personal e-mail address
 
