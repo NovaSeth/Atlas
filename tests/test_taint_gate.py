@@ -2420,3 +2420,14 @@ def test_env_overrides_for_atlas_and_quarantine(tmp_path):
 def test_hosted_connector_reads_taint(gate, name, taints):
     gate.tool(name, {})
     assert gate.tainted() is taints
+
+
+@pytest.mark.parametrize("origin", [{"renamed_kind": "tool"}, {}, {"kind": 5}, {"kind": None}, {"kind": ["human"]}])
+@pytest.mark.parametrize("source", ["typed", "queued"])
+def test_user_record_with_origin_lacking_a_string_kind_is_not_human(tainted, source, origin):
+    """A22: an origin object without a string kind fails closed (the taint stays)."""
+    e = user_entry("p-nk", "ok, napraw", source, None)
+    e["origin"] = origin
+    tp = write_transcript(tainted, [e])
+    tainted.prompt("ok, napraw", prompt_id="p-nk", transcript_path=tp)
+    assert tainted.tainted()
