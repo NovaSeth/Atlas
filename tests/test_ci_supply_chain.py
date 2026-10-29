@@ -116,6 +116,37 @@ class CommitCheckEdges(unittest.TestCase):
         d, _ = self.repo(["fix: fine"])
         self.assertNotEqual(self.check(d, "missing-revision").returncode, 0)
 
+    def test_missing_base_sha_falls_back_to_head_only(self):
+        gone = "deadbeef" * 5
+        d, _ = self.repo(["old subject", "fix: current"])
+        r = self.check(d, gone)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("fallback", r.stdout)
+        d, _ = self.repo(["fix: previous", "invalid current"])
+        r = self.check(d, gone)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("invalid current", r.stdout)
+
+    def test_missing_base_sha_falls_back_to_merge_base_with_origin_main(self):
+        gone = "deadbeef" * 5
+        d, base = self.repo(["fix: one", "feat: two"])
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/main", base], cwd=d, check=True)
+        r = self.check(d, gone)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("origin/main", r.stdout)
+        d, base = self.repo(["fix: one", "bad two", "feat: three"])
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/main", base], cwd=d, check=True)
+        r = self.check(d, gone)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("bad two", r.stdout)
+
+    def test_invalid_head_still_fails_with_missing_base(self):
+        d, _ = self.repo(["fix: fine"])
+        r = subprocess.run(
+            ["bash", str(CHECK), "deadbeef" * 5, "no-such-head"], cwd=str(d), capture_output=True, text=True
+        )
+        self.assertNotEqual(r.returncode, 0)
+
     def test_merge_subject_is_excluded(self):
         d, base = self.repo(["fix: parent"])
         parent = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=d, text=True).strip()
