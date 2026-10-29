@@ -146,7 +146,7 @@ class Sending(unittest.TestCase):
             m = self.msg()
             ok, err = mailfmt.send_mail(m)
         self.assertTrue(ok, err)
-        self.assertEqual(Path(str(self.out) + ".args").read_text().strip(), "-t -oi")
+        self.assertEqual(Path(str(self.out) + ".args").read_text().strip(), "-t -oi -odi")
         self.assertEqual(self.out.read_bytes(), m.as_bytes())
 
     def test_sendmail_failure_is_reported_without_the_message(self):
