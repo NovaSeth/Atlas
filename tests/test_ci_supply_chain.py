@@ -63,6 +63,10 @@ class CommitCheck(unittest.TestCase):
         d, base = self.repo(["feat(gate): x", "fix: y", "test(atlas): z (RED)", "docs!: w"])
         self.assertEqual(self.check(d, base).returncode, 0)
 
+    def test_style_subject_passes(self):
+        d, base = self.repo(["style: ruff format", "style(gate): wrap"])
+        self.assertEqual(self.check(d, base).returncode, 0)
+
     def test_other_subjects_fail_and_are_named(self):
         d, base = self.repo(["feat: ok", "Journal: old style"])
         r = self.check(d, base)
