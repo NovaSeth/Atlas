@@ -244,6 +244,16 @@ say "state directory $STATE"
 for d in "$STATE" "$STATE/jobs.d" "$STATE/bridges.d" "$STATE/pauses" "$STATE/snapshots" "$STATE/runtime"; do
     run install -d -m 0750 -o "$AUSER" -g "$AGROUP" "$d"
 done
+# State files are never group/other-writable (cron used to create them 0664 under a 002 umask). Regular files only,
+# same filesystem, symlinks not followed.
+loose=0
+[ -d "$STATE" ] && loose=$(find "$STATE" -xdev -type f -perm /022 | wc -l)
+if [ "$DRY" -eq 1 ]; then
+    say "state files made non-group-writable: would fix $loose (dry run)"
+else
+    say "state files made non-group-writable: $loose"
+fi
+run find "$STATE" -xdev -type f -perm /022 -exec chmod go-w {} +
 install_if_absent() {   # $1 source  $2 destination  $3 mode
     if [ -e "$2" ]; then
         say "keeping existing $2"

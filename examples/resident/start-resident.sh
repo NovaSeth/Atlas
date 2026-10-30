@@ -55,7 +55,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     key="${BASH_REMATCH[1]}"
     val="${BASH_REMATCH[2]}"
     case "$key" in
-    RESIDENT_DIR | RESIDENT_SESSION | RESIDENT_NAME | RESIDENT_PERMISSION_MODE | RESIDENT_CLAUDE | SENTINEL_ATLAS | ATLAS_CODE | RESIDENT_EXTRA_ARGS | RESIDENT_AUTH_CHECKS | RESIDENT_MODEL | RESIDENT_EFFORT) ;;
+    RESIDENT_DIR | RESIDENT_SESSION | RESIDENT_NAME | RESIDENT_PERMISSION_MODE | RESIDENT_CLAUDE | SENTINEL_ATLAS | ATLAS_CODE | RESIDENT_EXTRA_ARGS | RESIDENT_AUTH_CHECKS | RESIDENT_MODEL | RESIDENT_EFFORT | RESIDENT_NOTES_DIR) ;;
     *) env_bad "$lineno" "unknown key $key" ;;
     esac
     if [[ $val =~ ^\"([^\"\$\`\\]*)\"$ ]]; then
@@ -63,7 +63,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     elif [[ ! $val =~ ^[^[:space:]\$\`\\\;\|\&\<\>\(\)\"\']*$ ]]; then
         env_bad "$lineno" "value of $key is not a bare word or a plain double-quoted string (quote values with spaces: $key=\"a b\"; no \$, backtick, backslash, ; | & < > ( ) or inner quotes)"
     fi
-    case "$key" in RESIDENT_DIR | RESIDENT_CLAUDE) [[ $val == \~/* ]] && val="$HOME/${val#\~/}" ;; esac
+    case "$key" in RESIDENT_DIR | RESIDENT_CLAUDE | RESIDENT_NOTES_DIR) [[ $val == \~/* ]] && val="$HOME/${val#\~/}" ;; esac
     printf -v "$key" '%s' "$val"
 done <"$ENV_FILE"
 [ -n "$unit_atlas" ] && SENTINEL_ATLAS="$unit_atlas"
@@ -76,6 +76,7 @@ RESIDENT_AUTH_CHECKS="${RESIDENT_AUTH_CHECKS:-}"
 RESIDENT_EXTRA_ARGS="${RESIDENT_EXTRA_ARGS:-}"
 RESIDENT_MODEL="${RESIDENT_MODEL:-}"
 RESIDENT_EFFORT="${RESIDENT_EFFORT:-}"
+RESIDENT_NOTES_DIR="${RESIDENT_NOTES_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/atlas-resident}"
 SENTINEL_ATLAS="${SENTINEL_ATLAS:-/var/lib/atlas}"
 ATLAS_CODE="${ATLAS_CODE:-/opt/atlas}"
 
@@ -120,6 +121,24 @@ case "$RESIDENT_EFFORT" in
     exit 2
     ;;
 esac
+# The resident's own notes (BOOT, AFTER-REBOOT.md) live in a directory the resident owns, never in the Atlas state
+# dir, which is read-only for the resident. An absolute path without a ".." part.
+case "$RESIDENT_NOTES_DIR" in
+/*/../* | */.. | *$'\n'*)
+    log "RESIDENT_NOTES_DIR '$RESIDENT_NOTES_DIR' must be an absolute path (or ~/...) without '..'"
+    exit 2
+    ;;
+/?*) ;;
+*)
+    log "RESIDENT_NOTES_DIR '$RESIDENT_NOTES_DIR' must be an absolute path or ~/<dir>"
+    exit 2
+    ;;
+esac
+[ "$RESIDENT_NOTES_DIR" = "$HOME/" ] && {
+    log "RESIDENT_NOTES_DIR must name a directory, not the home directory"
+    exit 2
+}
+NOTES="${RESIDENT_NOTES_DIR%/}"
 case "$RESIDENT_EXTRA_ARGS" in
 *$'\n'*)
     log "RESIDENT_EXTRA_ARGS must not contain a newline"
@@ -180,18 +199,25 @@ fi
 
 # f. A trace for the session: when and how the machine came up. No log text.
 if [ "$DRY" = 1 ]; then
-    log "dry run: would write $SENTINEL_ATLAS/BOOT"
+    log "dry run: notes dir $NOTES"
+    log "dry run: would write $NOTES/BOOT"
 else
+    if ! mkdir -p "$NOTES" || ! chmod 0700 "$NOTES"; then
+        log "RESIDENT_NOTES_DIR $NOTES cannot be created or protected (0700)"
+        exit 2
+    fi
     {
         date -u +%Y-%m-%dT%H:%M:%SZ
         echo "Machine came up after a restart. Uptime when the resident started: $(uptime -p 2>/dev/null || cut -d' ' -f1 /proc/uptime)"
         echo "Kernel: $(uname -r)"
-    } >"$SENTINEL_ATLAS/BOOT" || log "could not write BOOT (continuing)"
+    } >"$NOTES/BOOT" || log "could not write BOOT (continuing)"
 fi
 
 # g. Fresh session (no --continue): cheap and predictable; context comes from the note files.
+legacy=""
+[ -r "$SENTINEL_ATLAS/AFTER-REBOOT.md" ] && legacy=" A legacy note also exists at $SENTINEL_ATLAS/AFTER-REBOOT.md (read it; you cannot delete it)."
 PROMPT="The machine (re)started and I was started automatically by atlas-resident.service. Follow $ATLAS_CODE/AGENTS.md.
-Read $SENTINEL_ATLAS/BOOT and, if it exists, $SENTINEL_ATLAS/AFTER-REBOOT.md (a note the previous session left) and carry it out.
+Read $NOTES/BOOT and, if it exists, $NOTES/AFTER-REBOOT.md (a note the previous session left) and carry it out.$legacy
 Check Atlas: the stream is active, the heartbeat is fresh, and \`python3 $ATLAS_CODE/atlas/atlas.py check\` is clean.
 Arm your monitor tool (persistent) on exactly: SENTINEL_ATLAS=$SENTINEL_ATLAS $ATLAS_CODE/sentinel/session-sensor.sh
 Report a short result to the human. Never start a polling loop."

@@ -12,6 +12,9 @@ if [ -z "${PATROL_NICE:-}" ]; then
     export PATROL_NICE=1
     exec nice -n 10 bash "$0" "$@"
 fi
+# State files are never group- or other-writable, whatever umask cron gives us (login umask is 002 on Debian):
+# a member of the state group (the resident) must not be able to edit the baseline or the logs by hand.
+umask 027
 # CODE = where this script lives (sensors are called by absolute path); STATE = where every file the
 # patrol writes lives (SENTINEL_ATLAS, default: next to the code). The state dir is created when missing:
 # a fresh deploy must not fail silently.

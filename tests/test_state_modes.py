@@ -92,6 +92,7 @@ class StateModes(unittest.TestCase):
             return m.main()
 
     def test_s3_bless_check_ack_under_umask_002_leave_no_loose_file(self):
+        self.atlas_main("snap")
         self.assertEqual(self.atlas_main("bless"), 0)
         (self.state / "ALERT").write_text("2026-10-29T10:00:00Z\n== x ==\nbody\n")
         self.assertEqual(self.atlas_main("ack"), 0)

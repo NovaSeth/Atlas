@@ -42,13 +42,13 @@ class StartScript(unittest.TestCase):
         stub(self.bin / "codex", "echo SECRET-ACCOUNT-DATA; exit 1")
         stub(self.bin / "sleep")
         self.env_file = self.tmp / "resident.env"
-        self.notes = self.tmp / "notes"
+        self.notes = self.tmp / "xdg" / "atlas-resident"  # the default: XDG_STATE_HOME below
         self.write_env()
 
     def write_env(self, extra=""):
         self.env_file.write_text(
             f"RESIDENT_DIR={self.work}\nRESIDENT_SESSION=claude\nRESIDENT_NAME=atlas-server\nRESIDENT_PERMISSION_MODE=default\n"
-            f"RESIDENT_CLAUDE={self.bin}/claude\nSENTINEL_ATLAS={self.state}\nATLAS_CODE=/opt/atlas\nRESIDENT_NOTES_DIR={self.notes}\n{extra}"
+            f"RESIDENT_CLAUDE={self.bin}/claude\nSENTINEL_ATLAS={self.state}\nATLAS_CODE=/opt/atlas\n{extra}"
         )
 
     def run_script(self, *args, **env):
@@ -56,6 +56,7 @@ class StartScript(unittest.TestCase):
             "PATH": f"{self.bin}:/usr/bin:/bin",
             "RESIDENT_ENV": str(self.env_file),
             "HOME": str(self.tmp),
+            "XDG_STATE_HOME": str(self.tmp / "xdg"),
             "RESIDENT_ENV_TRUSTED_UID": str(os.getuid()),  # test harness only
         }
         e.update(env)
@@ -412,10 +413,7 @@ class StartScript(unittest.TestCase):
         self.assertTrue((self.tmp / "mynotes" / "BOOT").is_file())
 
     def test_default_notes_dir_follows_xdg_state_home(self):
-        self.write_env()
-        text = self.env_file.read_text().replace(f"RESIDENT_NOTES_DIR={self.notes}\n", "")
-        self.env_file.write_text(text)
-        xdg = self.tmp / "xdg"
+        xdg = self.tmp / "other-xdg"
         r = self.run_script(XDG_STATE_HOME=str(xdg))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue((xdg / "atlas-resident" / "BOOT").is_file())
