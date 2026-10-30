@@ -418,6 +418,36 @@ class StartScript(unittest.TestCase):
                 self.assertEqual(stat.S_IMODE(self.tmp.stat().st_mode), before)
                 self.assertFalse((self.tmp / "BOOT").exists())
 
+    def test_f1_r2_repeated_separators_ancestors_and_symlinks_are_refused(self):
+        home = str(self.tmp)
+        link = Path(tempfile.mkdtemp(prefix="notes-link-"))
+        self.addCleanup(shutil.rmtree, link, True)
+        (link / "home").symlink_to(self.tmp)
+        before = stat.S_IMODE(self.tmp.stat().st_mode)
+        for bad in (
+            "/" + home,
+            "/" + home.lstrip("/").replace("/", "//", 1),
+            home + "///",
+            str(self.tmp.parent),
+            str(link / "home"),
+            str(link / "home" / "sub"),
+        ):
+            with self.subTest(bad=bad):
+                self.write_env(f"RESIDENT_NOTES_DIR={bad}\n")
+                r = self.run_script()
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn("RESIDENT_NOTES_DIR", r.stderr)
+                self.assertEqual(stat.S_IMODE(self.tmp.stat().st_mode), before)
+                self.assertFalse((self.tmp / "BOOT").exists())
+                self.assertFalse((self.tmp / "sub").exists())
+
+    def test_f1_r2_double_slash_under_home_is_canonicalised(self):
+        self.write_env(f"RESIDENT_NOTES_DIR={self.tmp}//.local/state/x\n")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.tmp / ".local" / "state" / "x" / "BOOT").is_file())
+        self.assertIn(f"{self.tmp}/.local/state/x/BOOT", r.stdout + r.stderr + (self.trace.read_text()))
+
     def test_f1_valid_dir_under_home_still_works(self):
         self.write_env(f"RESIDENT_NOTES_DIR={self.tmp}/.local/state/x\n")
         r = self.run_script()
