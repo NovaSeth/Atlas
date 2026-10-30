@@ -42,12 +42,13 @@ class StartScript(unittest.TestCase):
         stub(self.bin / "codex", "echo SECRET-ACCOUNT-DATA; exit 1")
         stub(self.bin / "sleep")
         self.env_file = self.tmp / "resident.env"
+        self.notes = self.tmp / "notes"
         self.write_env()
 
     def write_env(self, extra=""):
         self.env_file.write_text(
             f"RESIDENT_DIR={self.work}\nRESIDENT_SESSION=claude\nRESIDENT_NAME=atlas-server\nRESIDENT_PERMISSION_MODE=default\n"
-            f"RESIDENT_CLAUDE={self.bin}/claude\nSENTINEL_ATLAS={self.state}\nATLAS_CODE=/opt/atlas\n{extra}"
+            f"RESIDENT_CLAUDE={self.bin}/claude\nSENTINEL_ATLAS={self.state}\nATLAS_CODE=/opt/atlas\nRESIDENT_NOTES_DIR={self.notes}\n{extra}"
         )
 
     def run_script(self, *args, **env):
@@ -108,11 +109,16 @@ class StartScript(unittest.TestCase):
         self.assertNotIn("screen -DmS", self.trace.read_text() if self.trace.exists() else "")
 
     def test_real_run_writes_boot_and_execs_screen(self):
+        # D-KR-23 (T-KR-33, P4): BOOT moved from the Atlas state dir to the resident's notes dir; the state dir
+        # is read-only for the resident, so it is made read-only here too. Every assertion is kept.
+        self.state.chmod(0o550)
+        self.addCleanup(self.state.chmod, 0o750)
         r = self.run_script()
         self.assertEqual(r.returncode, 0, r.stderr)
-        boot = (self.state / "BOOT").read_text()
+        boot = (self.notes / "BOOT").read_text()
         self.assertIn("Kernel:", boot)
         self.assertIn("screen -DmS claude", self.trace.read_text())
+        self.assertEqual(os.listdir(self.state), [], "nothing may be written under the state dir")
 
     def test_permission_mode_is_configurable(self):
         self.write_env("RESIDENT_PERMISSION_MODE=plan\n")
@@ -357,6 +363,75 @@ class StartScript(unittest.TestCase):
         self.assertRegex(t, r"(?m)^RESIDENT_MODEL=$")
         self.assertRegex(t, r"(?m)^RESIDENT_EFFORT=$")
 
+    # T-KR-33: the resident's notes live in its own dir, never in the (read-only) Atlas state dir.
+    def test_s1_boot_written_to_notes_dir_with_read_only_state(self):
+        self.state.chmod(0o550)
+        self.addCleanup(self.state.chmod, 0o750)
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("Kernel:", (self.notes / "BOOT").read_text())
+        self.assertEqual(stat.S_IMODE(self.notes.stat().st_mode), 0o700)
+        self.assertNotIn("could not write BOOT", r.stderr)
+
+    def test_s2_prompt_names_notes_paths_and_no_legacy_sentence(self):
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(f"{self.notes}/BOOT", r.stdout.replace("\\", ""))
+        self.assertIn(f"{self.notes}/AFTER-REBOOT.md", r.stdout.replace("\\", ""))
+        self.assertIn(f"would write {self.notes}/BOOT", r.stderr)
+        self.assertNotIn("legacy note", r.stdout)
+        self.assertFalse(self.notes.exists(), "a dry run created the notes dir")
+
+    def test_s2_legacy_note_is_named_when_present(self):
+        (self.state / "AFTER-REBOOT.md").write_text("old note\n")
+        r = self.run_script("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("legacy note", r.stdout)
+        self.assertIn(f"{self.state}/AFTER-REBOOT.md", r.stdout.replace("\\", ""))
+
+    def test_legacy_note_is_not_touched_by_a_real_run(self):
+        legacy = self.state / "AFTER-REBOOT.md"
+        legacy.write_text("old note\n")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(legacy.read_text(), "old note\n")
+        self.assertFalse((self.state / "BOOT").exists())
+
+    def test_bad_notes_dir_exits_two(self):
+        for bad in ("relative/dir", "~/", "/a/../b", '"$(id)"', '"/tmp/a`id`"'):
+            with self.subTest(bad=bad):
+                self.write_env(f"RESIDENT_NOTES_DIR={bad}\n")
+                r = self.run_script("--dry-run")
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn("RESIDENT_NOTES_DIR", r.stderr)
+
+    def test_tilde_notes_dir_is_expanded(self):
+        self.write_env("RESIDENT_NOTES_DIR=~/mynotes\n")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.tmp / "mynotes" / "BOOT").is_file())
+
+    def test_default_notes_dir_follows_xdg_state_home(self):
+        self.write_env()
+        text = self.env_file.read_text().replace(f"RESIDENT_NOTES_DIR={self.notes}\n", "")
+        self.env_file.write_text(text)
+        xdg = self.tmp / "xdg"
+        r = self.run_script(XDG_STATE_HOME=str(xdg))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((xdg / "atlas-resident" / "BOOT").is_file())
+
+    def test_uncreatable_notes_dir_exits_two(self):
+        (self.tmp / "afile").write_text("x")
+        self.write_env(f"RESIDENT_NOTES_DIR={self.tmp}/afile/sub\n")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("RESIDENT_NOTES_DIR", r.stderr)
+
+    def test_template_documents_the_key(self):
+        text = ENVTPL.read_text()
+        self.assertRegex(text, r"(?m)^RESIDENT_NOTES_DIR=\s*$")
+        self.assertIn("atlas-resident", text)
+
 
 class Templates(unittest.TestCase):
     def test_env_template_is_tracked_by_git(self):
@@ -470,6 +545,13 @@ class Docs(unittest.TestCase):
         t = self.read("docs/security.md")
         self.assertIn("atlas-resident", t)
         self.assertIn("standing privilege", t)
+
+    def test_docs_name_the_notes_dir_not_the_state_dir(self):  # S5
+        for name in ("AGENTS.md", "agent/claude-code/skills/atlas-resident/SKILL.md", "docs/resident.md"):
+            text = (ROOT / name).read_text()
+            self.assertIn("RESIDENT_NOTES_DIR", text, name)
+            for old in ("<state>/BOOT", "$SENTINEL_ATLAS/BOOT", "<state>/AFTER-REBOOT.md"):
+                self.assertNotIn(old, text, f"{name} still names {old}")
 
 
 if __name__ == "__main__":
