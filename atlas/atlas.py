@@ -1227,6 +1227,7 @@ COMMANDS = {
 
 
 def main(argv=None):
+    os.umask(0o027)  # state files are never group/other-writable, whatever the caller's umask (T-KR-33)
     argv = sys.argv if argv is None else argv
     cmd = argv[1] if len(argv) > 1 else "check"
     return COMMANDS.get(cmd, COMMANDS["check"])()

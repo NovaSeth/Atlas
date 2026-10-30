@@ -1,6 +1,6 @@
 {
   "name": "atlas-resident",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Operating procedure for an AI resident on a host watched by Atlas: the alert procedure (read Atlas data, verify by probing, bless or report), a quarantined log-reader subagent for untrusted logs, and an optional taint-gate hook that blocks privileged tool calls after untrusted data was read until a human message arrives.",
   "author": {"name": "Atlas maintainers"},
   "license": "MIT",

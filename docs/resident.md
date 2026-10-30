@@ -115,13 +115,19 @@ and stays attachable. This is not an official Claude Code feature; the exact ins
   logout), `Type=exec`, `Restart=on-failure`, at most 5 starts per hour.
 - `examples/resident/resident.env` - installed as `/etc/atlas/resident.env`: working directory, screen name,
   Remote Control name, `RESIDENT_PERMISSION_MODE` (no default: you choose, see below), path of `claude`, optional extra login checks (`RESIDENT_AUTH_CHECKS="codex login status"`).
+- `RESIDENT_NOTES_DIR` - the resident's notes directory: `BOOT` (written at every start) and `AFTER-REBOOT.md` (a note
+  the resident leaves for its next session). An absolute path or `~/...` without `..`; empty = `${XDG_STATE_HOME:-~/.local/state}/atlas-resident`
+  of the account that runs the unit. Created `0700`; a bad value or a directory that cannot be created is exit 2.
+  It is owned by the resident and never inside the Atlas state directory: that directory belongs to the `atlas`
+  user and is read-only for the resident by design, so the resident cannot edit the baseline or the logs.
 - `RESIDENT_EXTRA_ARGS` (empty by default) adds claude flags before the first prompt, split on whitespace (no quoting,
   no newline). Example: `--permission-mode bypassPermissions` also needs `--allow-dangerously-skip-permissions`,
   otherwise claude may stop at a consent prompt with nobody watching. Risk: this combination removes the human
   approval step for an AI that starts at boot; the account's rights are the only limit.
 - `examples/resident/start-resident.sh` - honours `RESIDENT-OFF`, refuses a second session, waits for the network,
-  checks the logins, writes `<state>/BOOT`, then starts a fresh session whose first prompt points the agent to
-  `AGENTS.md`, `BOOT` and `AFTER-REBOOT.md` and tells it to re-arm the session sensor. `--dry-run` prints what it
+  checks the logins, writes `BOOT` into the resident's notes directory, then starts a fresh session whose first prompt points the agent to
+  `AGENTS.md`, `BOOT` and `AFTER-REBOOT.md` (absolute paths in that directory; a legacy `AFTER-REBOOT.md` left in the state directory
+  is named too, read-only) and tells it to re-arm the session sensor. `--dry-run` prints what it
   would do. Exit 2 = bad setup (the env file is parsed as KEY=VALUE lines, never executed, and quoted when a value has spaces: `KEY="a b"`; it sets the trust level, so it must be a regular file owned by root and not writable by group/other: `root:root 0644`. The human owns the trust level; the agent account must not be able to raise its own), 3 = a login is missing, 4 = `claude` not found.
 
 ### Choose the trust level
