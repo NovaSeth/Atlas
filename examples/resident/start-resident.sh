@@ -123,22 +123,24 @@ case "$RESIDENT_EFFORT" in
 esac
 # The resident's own notes (BOOT, AFTER-REBOOT.md) live in a directory the resident owns, never in the Atlas state
 # dir, which is read-only for the resident. An absolute path without a ".." part.
-case "$RESIDENT_NOTES_DIR" in
-/*/../* | */.. | *$'\n'*)
-    log "RESIDENT_NOTES_DIR '$RESIDENT_NOTES_DIR' must be an absolute path (or ~/...) without '..'"
-    exit 2
-    ;;
-/?*) ;;
-*)
-    log "RESIDENT_NOTES_DIR '$RESIDENT_NOTES_DIR' must be an absolute path or ~/<dir>"
-    exit 2
-    ;;
-esac
-[ "$RESIDENT_NOTES_DIR" = "$HOME/" ] && {
-    log "RESIDENT_NOTES_DIR must name a directory, not the home directory"
+notes_bad() {
+    log "RESIDENT_NOTES_DIR '$RESIDENT_NOTES_DIR' must be an absolute path (or ~/<dir>) below the home directory: no '.' or '..' part, not / and not the home itself"
     exit 2
 }
-NOTES="${RESIDENT_NOTES_DIR%/}"
+NOTES="$RESIDENT_NOTES_DIR"
+while [ "${#NOTES}" -gt 1 ] && [ "${NOTES%/}" != "$NOTES" ]; do NOTES="${NOTES%/}"; done
+home_norm="$HOME"
+while [ "${#home_norm}" -gt 1 ] && [ "${home_norm%/}" != "$home_norm" ]; do home_norm="${home_norm%/}"; done
+case "$NOTES" in
+*$'\n'* | *[\$\`\(\)\;\|\&\<\>\*]*) notes_bad ;;
+/*) ;;
+*) notes_bad ;;
+esac
+[ "$NOTES" = "/" ] || [ "$NOTES" = "$home_norm" ] && notes_bad
+IFS=/ read -ra parts <<<"$NOTES"
+for part in "${parts[@]}"; do
+    [ "$part" = "." ] || [ "$part" = ".." ] && notes_bad
+done
 case "$RESIDENT_EXTRA_ARGS" in
 *$'\n'*)
     log "RESIDENT_EXTRA_ARGS must not contain a newline"
