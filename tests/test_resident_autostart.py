@@ -287,7 +287,7 @@ class StartScript(unittest.TestCase):
         """A PATH holding only what the script needs, without the programs named in omit."""
         d = self.tmp / "minbin"
         d.mkdir(exist_ok=True)
-        for name in ("stat", "id", "grep", "seq", "cut", "date", "uname", "uptime", "cat"):
+        for name in ("stat", "id", "grep", "seq", "cut", "date", "uname", "uptime", "cat", "realpath"):
             real = shutil.which(name)
             if real and not (d / name).exists():
                 (d / name).symlink_to(real)

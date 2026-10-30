@@ -129,18 +129,35 @@ notes_bad() {
 }
 NOTES="$RESIDENT_NOTES_DIR"
 while [ "${#NOTES}" -gt 1 ] && [ "${NOTES%/}" != "$NOTES" ]; do NOTES="${NOTES%/}"; done
-home_norm="$HOME"
-while [ "${#home_norm}" -gt 1 ] && [ "${home_norm%/}" != "$home_norm" ]; do home_norm="${home_norm%/}"; done
 case "$NOTES" in
 *$'\n'* | *[\$\`\(\)\;\|\&\<\>\*]*) notes_bad ;;
 /*) ;;
 *) notes_bad ;;
 esac
-[ "$NOTES" = "/" ] || [ "$NOTES" = "$home_norm" ] && notes_bad
 IFS=/ read -ra parts <<<"$NOTES"
 for part in "${parts[@]}"; do
     [ "$part" = "." ] || [ "$part" = ".." ] && notes_bad
 done
+# Compare canonical paths, not strings: repeated separators and symlinks must not reach the home directory.
+if ! command -v realpath >/dev/null 2>&1; then
+    log "realpath (GNU coreutils) not found: cannot validate RESIDENT_NOTES_DIR"
+    exit 2
+fi
+canon=$(realpath -m -- "$NOTES")
+lexical=$(realpath -m -s -- "$NOTES")
+home_canon=$(realpath -m -- "$HOME")
+if [ -z "$canon" ] || [ -z "$lexical" ] || [ -z "$home_canon" ]; then
+    log "RESIDENT_NOTES_DIR '$RESIDENT_NOTES_DIR' cannot be resolved"
+    exit 2
+fi
+if [ "$canon" != "$lexical" ]; then
+    log "RESIDENT_NOTES_DIR '$RESIDENT_NOTES_DIR' goes through a symlink (resolves to $canon): name the real directory"
+    exit 2
+fi
+if [ "$canon" = "/" ] || [ "$canon" = "$home_canon" ] || [[ $home_canon == "$canon"/* ]]; then
+    notes_bad
+fi
+NOTES="$canon"
 case "$RESIDENT_EXTRA_ARGS" in
 *$'\n'*)
     log "RESIDENT_EXTRA_ARGS must not contain a newline"
