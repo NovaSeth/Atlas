@@ -126,7 +126,7 @@ and stays attachable. This is not an official Claude Code feature; the exact ins
   approval step for an AI that starts at boot; the account's rights are the only limit.
 - `examples/resident/start-resident.sh` - honours `RESIDENT-OFF`, refuses a second session, waits for the network,
   checks the logins, writes `BOOT` into the resident's notes directory, then starts a fresh session whose first prompt points the agent to
-  `AGENTS.md`, `BOOT` and `AFTER-REBOOT.md` (absolute paths in that directory; a legacy `<state>/AFTER-REBOOT.md`
+  `AGENTS.md`, `BOOT` and `AFTER-REBOOT.md` (absolute paths in that directory; a legacy `AFTER-REBOOT.md` left in the state directory
   is named too, read-only) and tells it to re-arm the session sensor. `--dry-run` prints what it
   would do. Exit 2 = bad setup (the env file is parsed as KEY=VALUE lines, never executed, and quoted when a value has spaces: `KEY="a b"`; it sets the trust level, so it must be a regular file owned by root and not writable by group/other: `root:root 0644`. The human owns the trust level; the agent account must not be able to raise its own), 3 = a login is missing, 4 = `claude` not found.
 
