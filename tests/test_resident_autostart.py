@@ -406,6 +406,24 @@ class StartScript(unittest.TestCase):
                 self.assertEqual(r.returncode, 2, r.stderr)
                 self.assertIn("RESIDENT_NOTES_DIR", r.stderr)
 
+    def test_f1_home_root_and_dot_components_are_refused(self):
+        home = str(self.tmp)
+        before = stat.S_IMODE(self.tmp.stat().st_mode)
+        for bad in (home, home + "/", home + "//", "/", "//", "/../atlas-notes", "/tmp/./x", "/tmp/a/../b", "~"):
+            with self.subTest(bad=bad):
+                self.write_env(f"RESIDENT_NOTES_DIR={bad}\n")
+                r = self.run_script()
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn("RESIDENT_NOTES_DIR", r.stderr)
+                self.assertEqual(stat.S_IMODE(self.tmp.stat().st_mode), before)
+                self.assertFalse((self.tmp / "BOOT").exists())
+
+    def test_f1_valid_dir_under_home_still_works(self):
+        self.write_env(f"RESIDENT_NOTES_DIR={self.tmp}/.local/state/x\n")
+        r = self.run_script()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertTrue((self.tmp / ".local" / "state" / "x" / "BOOT").is_file())
+
     def test_tilde_notes_dir_is_expanded(self):
         self.write_env("RESIDENT_NOTES_DIR=~/mynotes\n")
         r = self.run_script()
