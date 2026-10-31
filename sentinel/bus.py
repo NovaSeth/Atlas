@@ -387,22 +387,70 @@ class WakeLimiter:
         return out
 
 
+def _owned_dir(path):
+    """True when `path` is a real directory (not a symlink) owned by the effective user."""
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISDIR(st.st_mode) and st.st_uid == os.geteuid()
+
+
+def _make_private_parents(path, home):
+    """Create the missing components of `path` below `home` with mode 0700; existing ones are never touched."""
+    missing = []
+    cur = Path(path)
+    while cur != home and not cur.exists() and cur != cur.parent:
+        missing.append(cur)
+        cur = cur.parent
+    for d in reversed(missing[1:]):  # the last one (`path` itself) is made by ensure_private_dir
+        try:
+            os.mkdir(d, 0o700)
+        except FileExistsError:
+            pass
+
+
 def wake_state_dir(bus_file=None):
-    """Where the session sensor keeps its shared wake budget: SENTINEL_STATE_DIR, else `runtime` next to the
-    bus file (= atlas/runtime in production)."""
+    """Where the session sensor keeps its shared wake budget, in this order:
+    1. SENTINEL_STATE_DIR;
+    2. `runtime` next to the bus file (= atlas/runtime in production) when this user owns it (or owns the
+       bus directory and `runtime` does not exist yet): the sensor runs as the Atlas user;
+    3. the resident's own directory ${XDG_STATE_HOME:-$HOME/.local/state}/atlas-resident/wake: the resident
+       reads the state directory but does not own it.
+    No HOME: None (the budget then lives in memory)."""
     if os.environ.get("SENTINEL_STATE_DIR"):
         return Path(os.environ["SENTINEL_STATE_DIR"])
-    return Path(bus_file).parent / "runtime" if bus_file else runtime_dir()
+    base = Path(bus_file).parent if bus_file else atlas_dir()
+    rt = base / "runtime"
+    if _owned_dir(rt) or (not os.path.lexists(rt) and _owned_dir(base)):
+        return rt
+    home = os.environ.get("HOME")
+    xdg = os.environ.get("XDG_STATE_HOME")
+    if xdg and os.path.isabs(xdg):
+        root = Path(xdg)
+    elif home and os.path.isabs(home):
+        root = Path(home) / ".local" / "state"
+    else:
+        return None
+    d = root / "atlas-resident" / "wake"
+    try:
+        _make_private_parents(d, Path(home) if home else Path("/"))
+    except OSError:
+        pass  # ensure_private_dir reports it and the budget falls back to memory
+    return d
 
 
 class SharedWakeBudget:
     """One wake window per state directory, shared by every follower (restarts included) and by replay.
     The window start (wall clock), the count and the closed-window summary live in `wake-budget.json`,
-    updated under a lock with an atomic write. State that cannot be read or saved counts as an hour whose
-    budget is already used up (fewer wake-ups, never more) and is reported once through `problem`."""
+    updated under a lock with an atomic write. A readable state that is corrupt counts as an hour whose budget
+    is already used up (fewer wake-ups, never more). A state directory that cannot be used at all (or cannot be
+    saved to) is replaced by an in-memory window with the same limit: events are still limited per hour, never
+    hidden only because the state is unusable. Either problem is reported once through `problem`."""
 
     def __init__(self, max_per_hour, state_dir, window_s=3600, clock=time.time):
-        self.max, self.dir, self.window, self.clock = max_per_hour, Path(state_dir), window_s, clock
+        self.max, self.dir, self.window, self.clock = max_per_hour, state_dir, window_s, clock
+        self._open = False  # the in-memory window is a fresh one (fail open), not an exhausted hour
         self.problem = ""  # set once when the state is unusable; the caller prints it
         self._reported = False
         self._mem = None  # in-memory fallback state while the file is unusable
@@ -475,8 +523,26 @@ class SharedWakeBudget:
             }
         return self._mem
 
+    def _fail_open(self, why):
+        """Shared state unusable: keep a per-process window with the same limit, report once."""
+        if not self._open:
+            self._open = True
+            self._mem = {
+                "start": self.clock() if self._mem is None else self._mem.get("start"),
+                "count": 0,
+                "suppressed": 0,
+                "first": "",
+                "summary_sent": False,
+                "closed": None,
+            }
+            if not self._reported:
+                self.problem = "wake budget state unusable (%s); budget kept in memory" % why
+        return self._mem
+
     def _run(self, op):
         try:
+            if self.dir is None:
+                raise UnsafeStateDir("no-home", "")
             ensure_private_dir(self.dir)
             with open(self.dir / "wake-budget.lock", "a") as lf:
                 fcntl.flock(lf, fcntl.LOCK_EX)
@@ -499,11 +565,10 @@ class SharedWakeBudget:
                     tmp.write_text(json.dumps(new))
                     os.replace(tmp, self.dir / "wake-budget.json")
                 self._mem = None
+                self._open = False
                 return result
         except (OSError, UnsafeStateDir) as e:
-            lim = self._limiter(
-                self._exhausted("wake budget state unusable (%s)" % getattr(e, "code", type(e).__name__))
-            )
+            lim = self._limiter(self._fail_open(getattr(e, "code", type(e).__name__)))
             result = op(lim)
             self._mem = self._dump(lim)
             self._remember(lim)
