@@ -104,6 +104,11 @@ scratch machine before this one.
   after the per-fingerprint dedup. Events over the limit are not printed. One `sentinel.wake-limit` summary line follows once, after the window closes,
   from the first sensor process (follower or replay, also a fresh one) that runs then; the human gets one notice.
   The events are still in `events.jsonl` and escalation is not limited.
+  The budget state lives in `SENTINEL_STATE_DIR` if set; else in `runtime` next to the bus file when the sensor's user
+  owns it; else (the resident, who only reads the state directory) in
+  `${XDG_STATE_HOME:-$HOME/.local/state}/atlas-resident/wake`. If that state is unusable (symlink, wrong owner, not
+  writable, no HOME) the budget is kept in memory for the process: events are still limited per hour, never hidden,
+  and one `sentinel.wake-limit` line names the reason.
 
 ## 4. Start the agent after a reboot (optional)
 
